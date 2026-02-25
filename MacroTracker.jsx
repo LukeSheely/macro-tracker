@@ -4,11 +4,11 @@
 
 import { useState, useEffect, useReducer, useRef } from "react";
 import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine,
+  BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine,
 } from "recharts";
 import {
   Plus, Flame, History, Settings, Trash2, X, Moon, Sun,
-  ChevronUp, ChevronDown, Check, RotateCcw, Target,
+  ChevronUp, ChevronDown, Check, RotateCcw, Target, Scale,
 } from "lucide-react";
 
 // ============================================================
@@ -26,6 +26,8 @@ const DEFAULT_STATE = {
   history: [],
   theme: "dark",
   frequentFoods: [],
+  weightLog: [],
+  weightUnit: "lbs",
 };
 
 /** Returns today's date string (YYYY-MM-DD) in the user's local timezone. */
@@ -181,6 +183,32 @@ function reducer(state, action) {
 
     case "DAILY_RESET":
       return performDailyReset(state, action.payload);
+
+    case "LOG_WEIGHT": {
+      const newEntry = {
+        id: generateId(),
+        date: getLocalDateString(),
+        weight: action.payload.weight,
+        unit: action.payload.unit,
+        time: new Date().toISOString(),
+      };
+      const existing = state.weightLog || [];
+      // Replace if an entry for today already exists
+      const filtered = existing.filter((e) => e.date !== newEntry.date);
+      return {
+        ...state,
+        weightLog: [newEntry, ...filtered].sort((a, b) => b.date.localeCompare(a.date)),
+      };
+    }
+
+    case "DELETE_WEIGHT":
+      return {
+        ...state,
+        weightLog: (state.weightLog || []).filter((e) => e.id !== action.payload),
+      };
+
+    case "SET_WEIGHT_UNIT":
+      return { ...state, weightUnit: action.payload };
 
     case "RESET_ALL":
       return {
@@ -833,6 +861,229 @@ function HistoryScreen({ state }) {
 }
 
 // ============================================================
+// WEIGHT SCREEN
+// ============================================================
+
+function WeightScreen({ state, dispatch }) {
+  const isDark = state.theme === "dark";
+  const weightLog = state.weightLog || [];
+  const weightUnit = state.weightUnit || "lbs";
+
+  const [inputWeight, setInputWeight] = useState("");
+  const [error, setError] = useState("");
+  const [pendingDelete, setPendingDelete] = useState(null);
+  const deleteTimerRef = useRef(null);
+
+  useEffect(() => () => clearTimeout(deleteTimerRef.current), []);
+
+  const handleDeleteClick = (id) => {
+    if (pendingDelete === id) {
+      clearTimeout(deleteTimerRef.current);
+      dispatch({ type: "DELETE_WEIGHT", payload: id });
+      setPendingDelete(null);
+    } else {
+      setPendingDelete(id);
+      clearTimeout(deleteTimerRef.current);
+      deleteTimerRef.current = setTimeout(() => setPendingDelete(null), 3000);
+    }
+  };
+
+  const handleLogWeight = () => {
+    const w = parseFloat(inputWeight);
+    if (inputWeight === "" || isNaN(w)) {
+      setError("Please enter a valid weight.");
+      return;
+    }
+    if (w <= 0) {
+      setError("Weight must be greater than 0.");
+      return;
+    }
+    if (w > 1500) {
+      setError("Weight seems too high. Please double-check.");
+      return;
+    }
+    setError("");
+    dispatch({ type: "LOG_WEIGHT", payload: { weight: w, unit: weightUnit } });
+    setInputWeight("");
+  };
+
+  // Last 14 entries oldest-first for the chart
+  const chartData = [...weightLog]
+    .slice(0, 14)
+    .reverse()
+    .map((e) => ({
+      date: e.date.slice(5).replace("-", "/"),
+      weight: e.weight,
+    }));
+
+  const latestEntry = weightLog[0];
+
+  const card = isDark ? "bg-zinc-800" : "bg-white shadow-sm";
+  const text = isDark ? "text-white" : "text-zinc-900";
+  const muted = isDark ? "text-zinc-400" : "text-zinc-500";
+  const inputClass = `flex-1 text-center text-2xl font-bold py-2.5 px-3 rounded-xl outline-none transition-colors ${
+    isDark
+      ? "bg-zinc-700 text-white border border-zinc-600 focus:border-emerald-500"
+      : "bg-zinc-50 text-zinc-900 border border-zinc-200 focus:border-emerald-500"
+  }`;
+
+  return (
+    <div className="flex flex-col gap-5 pb-28 pt-4">
+      <div className="text-center">
+        <h1 className={`text-2xl font-bold ${text}`}>Weight</h1>
+      </div>
+
+      {/* Log weight card */}
+      <div className={`rounded-2xl p-5 ${card}`}>
+        <h2 className={`text-sm font-semibold tracking-widest mb-4 ${muted}`}>LOG TODAY'S WEIGHT</h2>
+
+        {/* Unit toggle */}
+        <div className="flex gap-2 mb-4">
+          {["lbs", "kg"].map((unit) => (
+            <button
+              key={unit}
+              onClick={() => dispatch({ type: "SET_WEIGHT_UNIT", payload: unit })}
+              className={`px-4 py-2 rounded-xl text-sm font-semibold transition-colors ${
+                weightUnit === unit
+                  ? "bg-emerald-500 text-white"
+                  : isDark
+                  ? "bg-zinc-700 text-zinc-300 hover:bg-zinc-600"
+                  : "bg-zinc-100 text-zinc-700 hover:bg-zinc-200"
+              }`}
+            >
+              {unit}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex items-center gap-3 mb-2">
+          <input
+            type="number"
+            value={inputWeight}
+            onChange={(e) => { setInputWeight(e.target.value); setError(""); }}
+            placeholder={weightUnit === "lbs" ? "e.g. 175" : "e.g. 79.5"}
+            className={inputClass}
+            onKeyDown={(e) => e.key === "Enter" && handleLogWeight()}
+          />
+          <span className={`text-base font-medium shrink-0 ${muted}`}>{weightUnit}</span>
+        </div>
+
+        {error && <p className="text-red-400 text-sm mb-3">{error}</p>}
+
+        <button
+          onClick={handleLogWeight}
+          className="w-full py-3 bg-emerald-500 hover:bg-emerald-400 text-white font-semibold rounded-xl transition-colors mt-2"
+        >
+          Log Weight
+        </button>
+
+        {latestEntry && (
+          <p className={`text-xs text-center mt-3 ${muted}`}>
+            Latest:{" "}
+            <span className={`font-semibold ${text}`}>
+              {latestEntry.weight} {latestEntry.unit}
+            </span>{" "}
+            on {formatDate(latestEntry.date)}
+          </p>
+        )}
+      </div>
+
+      {/* Trend chart — only show when there are 2+ entries */}
+      {chartData.length >= 2 && (
+        <div className={`rounded-2xl p-5 ${card}`}>
+          <h2 className={`text-sm font-semibold tracking-widest mb-4 ${muted}`}>TREND</h2>
+          <div style={{ height: 140 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={chartData} margin={{ top: 4, right: 4, left: -24, bottom: 0 }}>
+                <XAxis
+                  dataKey="date"
+                  tick={{ fontSize: 9, fill: isDark ? "#71717a" : "#a1a1aa" }}
+                  tickLine={false}
+                  axisLine={false}
+                />
+                <YAxis
+                  tick={{ fontSize: 9, fill: isDark ? "#71717a" : "#a1a1aa" }}
+                  tickLine={false}
+                  axisLine={false}
+                  domain={["auto", "auto"]}
+                />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: isDark ? "#27272a" : "#fff",
+                    border: `1px solid ${isDark ? "#3f3f46" : "#e4e4e7"}`,
+                    borderRadius: "10px",
+                    color: isDark ? "#fff" : "#18181b",
+                    fontSize: 12,
+                  }}
+                  cursor={{ stroke: isDark ? "#3f3f46" : "#e4e4e7" }}
+                  formatter={(val) => [`${val} ${weightUnit}`, "Weight"]}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="weight"
+                  stroke="#10b981"
+                  strokeWidth={2}
+                  dot={{ fill: "#10b981", r: 3 }}
+                  activeDot={{ r: 5 }}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
+
+      {/* Log history */}
+      {weightLog.length > 0 ? (
+        <div>
+          <div className="flex justify-between items-center mb-3">
+            <h2 className={`text-base font-semibold ${text}`}>Log ({weightLog.length})</h2>
+            <span className={`text-xs ${muted}`}>Tap delete twice to confirm</span>
+          </div>
+          <div className="flex flex-col gap-2">
+            {weightLog.map((entry) => {
+              const isPending = pendingDelete === entry.id;
+              return (
+                <div
+                  key={entry.id}
+                  className={`rounded-xl px-4 py-3 flex items-center gap-3 ${card}`}
+                >
+                  <div className="flex-1 min-w-0">
+                    <p className={`font-medium ${text}`}>{formatDate(entry.date)}</p>
+                    <p className={`text-xs ${muted}`}>{formatTime(entry.time)}</p>
+                  </div>
+                  <p className="text-emerald-400 font-semibold shrink-0">
+                    {entry.weight} {entry.unit}
+                  </p>
+                  <button
+                    onClick={() => handleDeleteClick(entry.id)}
+                    className="w-11 h-11 rounded-lg flex items-center justify-center shrink-0 transition-colors"
+                    style={{
+                      backgroundColor: isPending ? "#ef4444" : isDark ? "#27272a" : "#f4f4f5",
+                      color: isPending ? "#fff" : isDark ? "#71717a" : "#a1a1aa",
+                    }}
+                    aria-label={isPending ? "Confirm delete" : "Delete entry"}
+                  >
+                    {isPending ? <Check size={16} /> : <Trash2 size={16} />}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : (
+        <div className={`rounded-2xl p-8 text-center ${card}`}>
+          <Scale className="mx-auto mb-2" size={32} color={isDark ? "#52525b" : "#a1a1aa"} />
+          <p className={muted}>No weight entries yet.</p>
+          <p className={`text-sm mt-1 ${isDark ? "text-zinc-500" : "text-zinc-400"}`}>
+            Log your weight above to start tracking.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
 // SETTINGS SCREEN
 // ============================================================
 
@@ -840,13 +1091,21 @@ function SettingsScreen({ state, dispatch }) {
   const isDark = state.theme === "dark";
   const { goals } = state;
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [calGoalError, setCalGoalError] = useState("");
 
   const text = isDark ? "text-white" : "text-zinc-900";
   const muted = isDark ? "text-zinc-400" : "text-zinc-500";
   const card = isDark ? "bg-zinc-800" : "bg-white shadow-sm";
 
-  const clampCalories = (v) =>
-    dispatch({ type: "UPDATE_GOALS", payload: { calories: Math.max(500, Math.min(10000, v)) } });
+  const updateCalorieGoal = (v) => {
+    const num = Number(v);
+    if (isNaN(num) || num < 0) {
+      setCalGoalError("Calorie goal cannot be negative.");
+      return;
+    }
+    setCalGoalError("");
+    dispatch({ type: "UPDATE_GOALS", payload: { calories: Math.min(10000, num) } });
+  };
   const clampProtein = (v) =>
     dispatch({ type: "UPDATE_GOALS", payload: { protein: Math.max(10, Math.min(1000, v)) } });
 
@@ -898,19 +1157,20 @@ function SettingsScreen({ state, dispatch }) {
       {/* Calorie goal */}
       <div className={`rounded-2xl p-5 ${card}`}>
         <h2 className={`text-sm font-semibold tracking-widest mb-4 ${muted}`}>DAILY CALORIE GOAL</h2>
-        <div className="flex items-center gap-3 mb-4">
-          <button className={stepperBtn} onClick={() => clampCalories(goals.calories - 50)}>−</button>
+        <div className="flex items-center gap-3 mb-2">
+          <button className={stepperBtn} onClick={() => updateCalorieGoal(Math.max(0, goals.calories - 50))}>−</button>
           <input
             type="number"
             value={goals.calories}
-            onChange={(e) => clampCalories(Number(e.target.value))}
+            onChange={(e) => updateCalorieGoal(e.target.value)}
             className={numInput}
           />
-          <button className={stepperBtn} onClick={() => clampCalories(goals.calories + 50)}>+</button>
+          <button className={stepperBtn} onClick={() => updateCalorieGoal(goals.calories + 50)}>+</button>
         </div>
-        <div className="flex flex-wrap gap-2">
+        {calGoalError && <p className="text-red-400 text-sm mb-3">{calGoalError}</p>}
+        <div className="flex flex-wrap gap-2 mt-2">
           {calPresets.map((p) => (
-            <button key={p} onClick={() => clampCalories(p)} className={presetBtn(goals.calories === p)}>
+            <button key={p} onClick={() => updateCalorieGoal(p)} className={presetBtn(goals.calories === p)}>
               {p.toLocaleString()}
             </button>
           ))}
@@ -961,7 +1221,7 @@ function SettingsScreen({ state, dispatch }) {
         ) : (
           <div className="flex flex-col gap-3">
             <p className={`text-sm ${isDark ? "text-zinc-300" : "text-zinc-600"}`}>
-              This will permanently delete all entries, history, and frequent foods. Goals will reset
+              This will permanently delete all entries, history, frequent foods, and weight log. Goals will reset
               to defaults. Are you sure?
             </p>
             <div className="flex gap-3">
@@ -998,8 +1258,11 @@ function NavBar({ activeTab, onTabChange, isDark, onAddEntry }) {
   const navBg = isDark ? "#18181b" : "#ffffff";
   const navBorder = isDark ? "#27272a" : "#e4e4e7";
 
-  const tabs = [
+  const leftTabs = [
     { id: "today", label: "Today", icon: Flame },
+    { id: "weight", label: "Weight", icon: Scale },
+  ];
+  const rightTabs = [
     { id: "history", label: "History", icon: History },
     { id: "settings", label: "Settings", icon: Settings },
   ];
@@ -1014,8 +1277,8 @@ function NavBar({ activeTab, onTabChange, isDark, onAddEntry }) {
       }}
     >
       <div className="flex items-end">
-        {/* Today tab */}
-        {[tabs[0]].map((tab) => {
+        {/* Today + Weight tabs */}
+        {leftTabs.map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
           return (
@@ -1055,7 +1318,7 @@ function NavBar({ activeTab, onTabChange, isDark, onAddEntry }) {
         </div>
 
         {/* History + Settings tabs */}
-        {tabs.slice(1).map((tab) => {
+        {rightTabs.map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
           return (
@@ -1159,6 +1422,7 @@ export default function MacroTracker() {
             {activeTab === "today" && (
               <TodayScreen state={state} dispatch={dispatch} onAddEntry={handleAddEntry} />
             )}
+            {activeTab === "weight" && <WeightScreen state={state} dispatch={dispatch} />}
             {activeTab === "history" && <HistoryScreen state={state} />}
             {activeTab === "settings" && <SettingsScreen state={state} dispatch={dispatch} />}
           </div>
