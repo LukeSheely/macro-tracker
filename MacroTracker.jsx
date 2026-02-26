@@ -3,6 +3,7 @@
 // Libraries: React, Recharts, lucide-react, Tailwind CSS
 
 import { useState, useEffect, useReducer, useRef } from "react";
+import { Analytics } from "@vercel/analytics/react";
 import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine,
 } from "recharts";
@@ -1444,6 +1445,8 @@ export default function MacroTracker() {
           onClose={() => setShowAddModal(false)}
         />
       )}
+
+      <Analytics />
     </>
   );
 }
