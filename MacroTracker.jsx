@@ -9,7 +9,7 @@ import {
 } from "recharts";
 import {
   Plus, Flame, History, Settings, Trash2, X, Moon, Sun,
-  ChevronUp, ChevronDown, Check, RotateCcw, Target, Scale,
+  ChevronUp, ChevronDown, Check, RotateCcw, Target, Scale, EyeOff, Eye,
 } from "lucide-react";
 
 // ============================================================
@@ -29,6 +29,7 @@ const DEFAULT_STATE = {
   frequentFoods: [],
   weightLog: [],
   weightUnit: "lbs",
+  excludedDates: [],
 };
 
 /** Returns today's date string (YYYY-MM-DD) in the user's local timezone. */
@@ -210,6 +211,17 @@ function reducer(state, action) {
 
     case "SET_WEIGHT_UNIT":
       return { ...state, weightUnit: action.payload };
+
+    case "TOGGLE_EXCLUDE_DATE": {
+      const excluded = state.excludedDates || [];
+      const date = action.payload;
+      return {
+        ...state,
+        excludedDates: excluded.includes(date)
+          ? excluded.filter((d) => d !== date)
+          : [...excluded, date],
+      };
+    }
 
     case "RESET_ALL":
       return {
@@ -667,9 +679,10 @@ function AddEntryModal({ state, dispatch, onClose }) {
 // HISTORY SCREEN
 // ============================================================
 
-function HistoryScreen({ state }) {
+function HistoryScreen({ state, dispatch }) {
   const isDark = state.theme === "dark";
   const history = state.history || [];
+  const excludedDates = new Set(state.excludedDates || []);
   const [expandedDate, setExpandedDate] = useState(null);
 
   const text = isDark ? "text-white" : "text-zinc-900";
@@ -677,17 +690,18 @@ function HistoryScreen({ state }) {
   const card = isDark ? "bg-zinc-800" : "bg-white shadow-sm";
   const innerCard = isDark ? "bg-zinc-700" : "bg-zinc-50";
 
-  // Weekly stats
+  // Weekly stats — skip empty days and manually excluded days
   const last7 = history.slice(0, 7);
+  const loggedDays = last7.filter((d) => d.entries.length > 0 && !excludedDates.has(d.date));
   const avgCalories =
-    last7.length > 0
-      ? Math.round(last7.reduce((s, d) => s + d.totalCalories, 0) / last7.length)
+    loggedDays.length > 0
+      ? Math.round(loggedDays.reduce((s, d) => s + d.totalCalories, 0) / loggedDays.length)
       : 0;
   const avgProtein =
-    last7.length > 0
-      ? Math.round(last7.reduce((s, d) => s + d.totalProtein, 0) / last7.length)
+    loggedDays.length > 0
+      ? Math.round(loggedDays.reduce((s, d) => s + d.totalProtein, 0) / loggedDays.length)
       : 0;
-  const daysMetGoals = last7.filter(
+  const daysMetGoals = loggedDays.filter(
     (d) => d.totalCalories <= d.goalCalories && d.totalProtein >= d.goalProtein
   ).length;
 
@@ -725,15 +739,19 @@ function HistoryScreen({ state }) {
             <div className="grid grid-cols-3 gap-3 mb-5">
               <div className={`rounded-xl p-3 text-center ${innerCard}`}>
                 <p className="text-xl font-bold text-emerald-400">{avgCalories.toLocaleString()}</p>
-                <p className={`text-xs mt-0.5 ${muted}`}>Avg Cal</p>
+                <p className={`text-xs mt-0.5 ${muted}`}>
+                  Avg Cal{loggedDays.length < last7.length ? ` (${loggedDays.length}d)` : ""}
+                </p>
               </div>
               <div className={`rounded-xl p-3 text-center ${innerCard}`}>
                 <p className="text-xl font-bold text-blue-400">{avgProtein}g</p>
-                <p className={`text-xs mt-0.5 ${muted}`}>Avg Protein</p>
+                <p className={`text-xs mt-0.5 ${muted}`}>
+                  Avg Protein{loggedDays.length < last7.length ? ` (${loggedDays.length}d)` : ""}
+                </p>
               </div>
               <div className={`rounded-xl p-3 text-center ${innerCard}`}>
                 <p className="text-xl font-bold text-amber-400">
-                  {daysMetGoals}/{last7.length}
+                  {daysMetGoals}/{loggedDays.length}
                 </p>
                 <p className={`text-xs mt-0.5 ${muted}`}>Goals Met</p>
               </div>
@@ -786,37 +804,58 @@ function HistoryScreen({ state }) {
               const caloriesOver = day.totalCalories > day.goalCalories;
               const proteinMet = day.totalProtein >= day.goalProtein;
               const isExpanded = expandedDate === day.date;
+              const isExcluded = excludedDates.has(day.date);
 
               return (
-                <div key={day.date} className={`rounded-2xl overflow-hidden ${card}`}>
-                  {/* Day header — tappable */}
-                  <button
-                    onClick={() => setExpandedDate(isExpanded ? null : day.date)}
-                    className="w-full px-4 py-4 flex items-center gap-3 text-left"
-                  >
-                    <div className="flex-1 min-w-0">
-                      <p className={`font-semibold ${text}`}>{formatDate(day.date)}</p>
-                      <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1">
-                        <span
-                          className="text-sm font-medium"
-                          style={{ color: caloriesOver ? "#ef4444" : "#10b981" }}
-                        >
-                          {day.totalCalories.toLocaleString()} / {day.goalCalories.toLocaleString()} kcal
-                        </span>
-                        <span
-                          className="text-sm"
-                          style={{ color: proteinMet ? "#60a5fa" : isDark ? "#71717a" : "#a1a1aa" }}
-                        >
-                          {day.totalProtein}g / {day.goalProtein}g protein
-                        </span>
+                <div
+                  key={day.date}
+                  className={`rounded-2xl overflow-hidden ${card}`}
+                  style={{ opacity: isExcluded ? 0.55 : 1 }}
+                >
+                  {/* Day header row */}
+                  <div className="flex items-stretch">
+                    {/* Expand/collapse button — takes up most of the row */}
+                    <button
+                      onClick={() => setExpandedDate(isExpanded ? null : day.date)}
+                      className="flex-1 px-4 py-4 flex items-center gap-3 text-left min-w-0"
+                    >
+                      <div className="flex-1 min-w-0">
+                        <p className={`font-semibold ${text}`}>{formatDate(day.date)}</p>
+                        <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1">
+                          <span
+                            className="text-sm font-medium"
+                            style={{ color: isExcluded ? (isDark ? "#71717a" : "#a1a1aa") : caloriesOver ? "#ef4444" : "#10b981" }}
+                          >
+                            {day.totalCalories.toLocaleString()} / {day.goalCalories.toLocaleString()} kcal
+                          </span>
+                          <span
+                            className="text-sm"
+                            style={{ color: isExcluded ? (isDark ? "#71717a" : "#a1a1aa") : proteinMet ? "#60a5fa" : isDark ? "#71717a" : "#a1a1aa" }}
+                          >
+                            {day.totalProtein}g / {day.goalProtein}g protein
+                          </span>
+                        </div>
                       </div>
-                    </div>
-                    {isExpanded ? (
-                      <ChevronUp size={16} color={isDark ? "#71717a" : "#a1a1aa"} />
-                    ) : (
-                      <ChevronDown size={16} color={isDark ? "#71717a" : "#a1a1aa"} />
-                    )}
-                  </button>
+                      {isExpanded ? (
+                        <ChevronUp size={16} color={isDark ? "#71717a" : "#a1a1aa"} />
+                      ) : (
+                        <ChevronDown size={16} color={isDark ? "#71717a" : "#a1a1aa"} />
+                      )}
+                    </button>
+
+                    {/* Exclude/include toggle */}
+                    <button
+                      onClick={() => dispatch({ type: "TOGGLE_EXCLUDE_DATE", payload: day.date })}
+                      className="px-3 flex items-center justify-center shrink-0 transition-colors"
+                      style={{
+                        borderLeft: `1px solid ${isDark ? "#27272a" : "#f4f4f5"}`,
+                        color: isExcluded ? "#f59e0b" : isDark ? "#52525b" : "#d4d4d8",
+                      }}
+                      title={isExcluded ? "Include in averages" : "Exclude from averages"}
+                    >
+                      {isExcluded ? <EyeOff size={15} /> : <Eye size={15} />}
+                    </button>
+                  </div>
 
                   {/* Expanded entries */}
                   {isExpanded && (
@@ -1424,7 +1463,7 @@ export default function MacroTracker() {
               <TodayScreen state={state} dispatch={dispatch} onAddEntry={handleAddEntry} />
             )}
             {activeTab === "weight" && <WeightScreen state={state} dispatch={dispatch} />}
-            {activeTab === "history" && <HistoryScreen state={state} />}
+            {activeTab === "history" && <HistoryScreen state={state} dispatch={dispatch} />}
             {activeTab === "settings" && <SettingsScreen state={state} dispatch={dispatch} />}
           </div>
 
