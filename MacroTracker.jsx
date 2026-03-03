@@ -961,7 +961,7 @@ function WeightScreen({ state, dispatch }) {
   const card = isDark ? "bg-zinc-800" : "bg-white shadow-sm";
   const text = isDark ? "text-white" : "text-zinc-900";
   const muted = isDark ? "text-zinc-400" : "text-zinc-500";
-  const inputClass = `flex-1 text-center text-2xl font-bold py-2.5 px-3 rounded-xl outline-none transition-colors ${
+  const inputClass = `flex-1 min-w-0 w-0 text-center text-xl font-bold py-2.5 px-2 rounded-xl outline-none transition-colors ${
     isDark
       ? "bg-zinc-700 text-white border border-zinc-600 focus:border-emerald-500"
       : "bg-zinc-50 text-zinc-900 border border-zinc-200 focus:border-emerald-500"
@@ -1155,7 +1155,7 @@ function SettingsScreen({ state, dispatch }) {
   const stepperBtn = `w-11 h-11 rounded-xl flex items-center justify-center text-xl font-bold transition-colors shrink-0 ${
     isDark ? "bg-zinc-700 hover:bg-zinc-600 text-white" : "bg-zinc-100 hover:bg-zinc-200 text-zinc-900"
   }`;
-  const numInput = `flex-1 text-center text-2xl font-bold py-2.5 rounded-xl outline-none transition-colors ${
+  const numInput = `flex-1 min-w-0 w-0 text-center text-xl font-bold py-2.5 rounded-xl outline-none transition-colors ${
     isDark ? "bg-zinc-700 text-white border border-zinc-600" : "bg-zinc-50 text-zinc-900 border border-zinc-200"
   }`;
   const presetBtn = (active) =>
