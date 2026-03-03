@@ -679,15 +679,16 @@ function HistoryScreen({ state }) {
 
   // Weekly stats
   const last7 = history.slice(0, 7);
+  const loggedDays = last7.filter((d) => d.entries.length > 0);
   const avgCalories =
-    last7.length > 0
-      ? Math.round(last7.reduce((s, d) => s + d.totalCalories, 0) / last7.length)
+    loggedDays.length > 0
+      ? Math.round(loggedDays.reduce((s, d) => s + d.totalCalories, 0) / loggedDays.length)
       : 0;
   const avgProtein =
-    last7.length > 0
-      ? Math.round(last7.reduce((s, d) => s + d.totalProtein, 0) / last7.length)
+    loggedDays.length > 0
+      ? Math.round(loggedDays.reduce((s, d) => s + d.totalProtein, 0) / loggedDays.length)
       : 0;
-  const daysMetGoals = last7.filter(
+  const daysMetGoals = loggedDays.filter(
     (d) => d.totalCalories <= d.goalCalories && d.totalProtein >= d.goalProtein
   ).length;
 
@@ -725,15 +726,19 @@ function HistoryScreen({ state }) {
             <div className="grid grid-cols-3 gap-3 mb-5">
               <div className={`rounded-xl p-3 text-center ${innerCard}`}>
                 <p className="text-xl font-bold text-emerald-400">{avgCalories.toLocaleString()}</p>
-                <p className={`text-xs mt-0.5 ${muted}`}>Avg Cal</p>
+                <p className={`text-xs mt-0.5 ${muted}`}>
+                  Avg Cal{loggedDays.length < last7.length ? ` (${loggedDays.length}d)` : ""}
+                </p>
               </div>
               <div className={`rounded-xl p-3 text-center ${innerCard}`}>
                 <p className="text-xl font-bold text-blue-400">{avgProtein}g</p>
-                <p className={`text-xs mt-0.5 ${muted}`}>Avg Protein</p>
+                <p className={`text-xs mt-0.5 ${muted}`}>
+                  Avg Protein{loggedDays.length < last7.length ? ` (${loggedDays.length}d)` : ""}
+                </p>
               </div>
               <div className={`rounded-xl p-3 text-center ${innerCard}`}>
                 <p className="text-xl font-bold text-amber-400">
-                  {daysMetGoals}/{last7.length}
+                  {daysMetGoals}/{loggedDays.length}
                 </p>
                 <p className={`text-xs mt-0.5 ${muted}`}>Goals Met</p>
               </div>
