@@ -552,7 +552,7 @@ function BarcodeScanner({ onDetect, onClose }) {
     scanner
       .start(
         { facingMode: "environment" },
-        { fps: 10, qrbox: { width: 260, height: 100 } },
+        { fps: 10 },
         (code) => {
           if (detectedRef.current) return;
           detectedRef.current = true;
