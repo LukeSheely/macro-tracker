@@ -535,39 +535,100 @@ function TodayScreen({ state, dispatch, onAddEntry, onScanOpen }) {
 
 function BarcodeScanner({ onDetect, onClose }) {
   const videoRef = useRef(null);
-  const stopRef = useRef(null);
   const [camError, setCamError] = useState("");
 
   useEffect(() => {
-    const hints = new Map();
-    hints.set(DecodeHintType.POSSIBLE_FORMATS, [
-      BarcodeFormat.UPC_A,
-      BarcodeFormat.UPC_E,
-      BarcodeFormat.EAN_13,
-      BarcodeFormat.EAN_8,
-    ]);
-    hints.set(DecodeHintType.TRY_HARDER, true);
+    const video = videoRef.current;
+    if (!video) return;
 
-    const reader = new BrowserMultiFormatReader(hints);
+    let active = true;
+    let rafId = null;
+    let mediaStream = null;
 
-    reader
-      .decodeFromConstraints(
-        { video: { facingMode: "environment" } },
-        videoRef.current,
-        (result, _err, controls) => {
-          if (result) {
-            stopRef.current = controls;
-            controls.stop();
-            onDetect(result.getText());
-          }
-        }
-      )
-      .catch(() => setCamError("Camera access denied. Please allow camera permission."));
-
-    return () => {
-      stopRef.current?.stop();
-      reader.reset();
+    const stopAll = () => {
+      active = false;
+      cancelAnimationFrame(rafId);
+      if (mediaStream) {
+        mediaStream.getTracks().forEach((t) => t.stop());
+        mediaStream = null;
+      }
+      if (video) video.srcObject = null;
     };
+
+    (async () => {
+      // 1. Get camera stream ourselves so we control cleanup
+      try {
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "environment" },
+        });
+      } catch {
+        if (active) setCamError("Camera access denied. Please allow camera permission.");
+        return;
+      }
+      if (!active) { stopAll(); return; }
+
+      video.srcObject = mediaStream;
+      try { await video.play(); } catch {}
+      if (!active) { stopAll(); return; }
+
+      // 2a. Native BarcodeDetector — iOS 17+, Chrome 83+ (hardware-accelerated)
+      if ("BarcodeDetector" in window) {
+        const detector = new window.BarcodeDetector({
+          formats: ["upc_a", "upc_e", "ean_13", "ean_8"],
+        });
+        const loop = async () => {
+          if (!active) return;
+          if (video.readyState >= 2) {
+            try {
+              const codes = await detector.detect(video);
+              if (codes.length > 0 && active) {
+                stopAll();
+                onDetect(codes[0].rawValue);
+                return;
+              }
+            } catch {}
+          }
+          rafId = requestAnimationFrame(loop);
+        };
+        rafId = requestAnimationFrame(loop);
+        return;
+      }
+
+      // 2b. ZXing canvas fallback — older browsers
+      const hints = new Map([
+        [DecodeHintType.POSSIBLE_FORMATS, [
+          BarcodeFormat.UPC_A, BarcodeFormat.UPC_E,
+          BarcodeFormat.EAN_13, BarcodeFormat.EAN_8,
+        ]],
+        [DecodeHintType.TRY_HARDER, true],
+      ]);
+      const reader = new BrowserMultiFormatReader(hints);
+      const canvas = document.createElement("canvas");
+      const ctx = canvas.getContext("2d");
+      let lastScan = 0;
+      const loop = () => {
+        if (!active) return;
+        const now = Date.now();
+        if (now - lastScan >= 150 && video.readyState >= 2 && video.videoWidth > 0) {
+          lastScan = now;
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+          ctx.drawImage(video, 0, 0);
+          try {
+            const result = reader.decodeFromCanvas(canvas);
+            if (result && active) {
+              stopAll();
+              onDetect(result.getText());
+              return;
+            }
+          } catch {}
+        }
+        rafId = requestAnimationFrame(loop);
+      };
+      rafId = requestAnimationFrame(loop);
+    })();
+
+    return stopAll;
   }, []);
 
   return (
@@ -590,7 +651,6 @@ function BarcodeScanner({ onDetect, onClose }) {
         <video
           ref={videoRef}
           className="w-full h-full object-cover"
-          autoPlay
           playsInline
           muted
         />
