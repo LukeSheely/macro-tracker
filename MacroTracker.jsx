@@ -591,17 +591,13 @@ function BarcodeScanner({ onDetect, onClose }) {
       const canvas = document.createElement("canvas");
       const ctx = canvas.getContext("2d");
 
-      // 2a. Native BarcodeDetector + ZXing in parallel — iOS 17+, Chrome 83+
-      // BarcodeDetector is fast for flat labels; ZXing TRY_HARDER catches curved ones
+      // 2a. Native BarcodeDetector — iOS 17+, Chrome 83+
       if ("BarcodeDetector" in window) {
         const supported = await window.BarcodeDetector.getSupportedFormats();
         const detector = new window.BarcodeDetector({ formats: supported });
         let nativeScanning = false;
-        let lastZxing = 0;
         const loop = async () => {
           if (!active) return;
-
-          // BarcodeDetector attempt (rate-limited by its own async resolve)
           if (!nativeScanning && video.readyState >= 2) {
             nativeScanning = true;
             try {
@@ -614,24 +610,6 @@ function BarcodeScanner({ onDetect, onClose }) {
             } catch {}
             nativeScanning = false;
           }
-
-          // ZXing parallel attempt at ~5fps for curved/distorted labels
-          const now = Date.now();
-          if (now - lastZxing >= 200 && video.readyState >= 2 && video.videoWidth > 0) {
-            lastZxing = now;
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            ctx.drawImage(video, 0, 0);
-            try {
-              const result = reader.decodeFromCanvas(canvas);
-              if (result && active) {
-                stopAll();
-                onDetect(result.getText());
-                return;
-              }
-            } catch {}
-          }
-
           if (active) rafId = requestAnimationFrame(loop);
         };
         rafId = requestAnimationFrame(loop);
