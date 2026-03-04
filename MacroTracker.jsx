@@ -51,9 +51,17 @@ function generateId() {
 
 /** Fetches nutrition data from Open Food Facts by barcode. Returns null if not found. */
 async function fetchProductByBarcode(barcode) {
-  const res = await fetch(
-    `https://world.openfoodfacts.org/api/v2/product/${barcode}.json?fields=product_name,nutriments,serving_size,serving_quantity`
-  );
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  let res;
+  try {
+    res = await fetch(
+      `https://world.openfoodfacts.org/api/v2/product/${barcode}.json?fields=product_name,nutriments,serving_size,serving_quantity`,
+      { signal: controller.signal }
+    );
+  } finally {
+    clearTimeout(timer);
+  }
   const data = await res.json();
   if (data.status !== 1 || !data.product) return null;
   const p = data.product;
