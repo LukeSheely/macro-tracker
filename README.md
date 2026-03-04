@@ -11,9 +11,16 @@ A clean, mobile-first calorie and protein tracker built with React. No accounts,
 
 ## Why I Built This
 
-Most calorie trackers are bloated with features I don't need — barcode scanners, social feeds, premium upsells. I wanted something fast and frictionless: open the app, log a meal in seconds, and see where I stand for the day. So I built one.
+Most calorie trackers are bloated with social feeds, premium upsells, and forced accounts. I wanted something fast and frictionless: open the app, log a meal in seconds, and see where I stand for the day. So I built one.
 
 ## Features
+
+**Barcode Scanner**
+- Tap the scan icon to open a full-screen camera scanner (mobile only)
+- Automatically looks up nutrition data via the free Open Food Facts database
+- Shows a serving size card — enter servings or grams, see live calorie/protein totals
+- Falls back gracefully to manual entry if a product isn't found
+- Uses native `BarcodeDetector` API on iOS 17+ and Android; ZXing canvas fallback for older devices
 
 **Daily Tracking**
 - Log calories and protein per meal with a quick-entry form
@@ -38,19 +45,21 @@ Most calorie trackers are bloated with features I don't need — barcode scanner
 **Privacy-First**
 - 100% client-side — all data lives in `localStorage`
 - No accounts, no tracking, no backend
-- Works offline after first load
+- Works offline after first load (scanner requires network for nutrition lookup)
 
 ## Tech Stack
 
-| Layer       | Technology                        |
-|-------------|-----------------------------------|
-| Framework   | React 18                          |
-| Bundler     | Vite 6                            |
-| Styling     | Tailwind CSS 3                    |
-| Charts      | Recharts                          |
-| Icons       | Lucide React                      |
-| Hosting     | Vercel                            |
-| Analytics   | Vercel Analytics (anonymous only) |
+| Layer            | Technology                                      |
+|------------------|-------------------------------------------------|
+| Framework        | React 18                                        |
+| Bundler          | Vite 6                                          |
+| Styling          | Tailwind CSS 3                                  |
+| Charts           | Recharts                                        |
+| Icons            | Lucide React                                    |
+| Barcode scanning | Native `BarcodeDetector` API + `@zxing/browser` |
+| Nutrition data   | Open Food Facts API (free, no key required)     |
+| Hosting          | Vercel                                          |
+| Analytics        | Vercel Analytics (anonymous only)               |
 
 ## Getting Started
 
