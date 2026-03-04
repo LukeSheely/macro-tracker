@@ -573,12 +573,13 @@ function BarcodeScanner({ onDetect, onClose }) {
 
       // 2a. Native BarcodeDetector — iOS 17+, Chrome 83+ (hardware-accelerated)
       if ("BarcodeDetector" in window) {
-        const detector = new window.BarcodeDetector({
-          formats: ["upc_a", "upc_e", "ean_13", "ean_8"],
-        });
+        const supported = await window.BarcodeDetector.getSupportedFormats();
+        const detector = new window.BarcodeDetector({ formats: supported });
+        let scanning = false;
         const loop = async () => {
           if (!active) return;
-          if (video.readyState >= 2) {
+          if (!scanning && video.readyState >= 2) {
+            scanning = true;
             try {
               const codes = await detector.detect(video);
               if (codes.length > 0 && active) {
@@ -587,8 +588,9 @@ function BarcodeScanner({ onDetect, onClose }) {
                 return;
               }
             } catch {}
+            scanning = false;
           }
-          rafId = requestAnimationFrame(loop);
+          if (active) rafId = requestAnimationFrame(loop);
         };
         rafId = requestAnimationFrame(loop);
         return;
