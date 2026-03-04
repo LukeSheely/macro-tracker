@@ -12,7 +12,8 @@ import {
   ChevronUp, ChevronDown, Check, RotateCcw, Target, Scale, EyeOff, Eye,
   ScanBarcode, Loader2,
 } from "lucide-react";
-import { Html5Qrcode, Html5QrcodeSupportedFormats } from "html5-qrcode";
+import { BrowserMultiFormatReader } from "@zxing/browser";
+import { DecodeHintType, BarcodeFormat } from "@zxing/library";
 
 // ============================================================
 // CONSTANTS & UTILITIES
@@ -533,45 +534,44 @@ function TodayScreen({ state, dispatch, onAddEntry, onScanOpen }) {
 // ============================================================
 
 function BarcodeScanner({ onDetect, onClose }) {
-  const html5QrRef = useRef(null);
-  const detectedRef = useRef(false);
+  const videoRef = useRef(null);
+  const stopRef = useRef(null);
   const [camError, setCamError] = useState("");
 
   useEffect(() => {
-    const scanner = new Html5Qrcode("__bcsv__", {
-      formatsToSupport: [
-        Html5QrcodeSupportedFormats.UPC_A,
-        Html5QrcodeSupportedFormats.UPC_E,
-        Html5QrcodeSupportedFormats.EAN_13,
-        Html5QrcodeSupportedFormats.EAN_8,
-      ],
-      verbose: false,
-    });
-    html5QrRef.current = scanner;
+    const hints = new Map();
+    hints.set(DecodeHintType.POSSIBLE_FORMATS, [
+      BarcodeFormat.UPC_A,
+      BarcodeFormat.UPC_E,
+      BarcodeFormat.EAN_13,
+      BarcodeFormat.EAN_8,
+    ]);
+    hints.set(DecodeHintType.TRY_HARDER, true);
 
-    scanner
-      .start(
-        { facingMode: "environment" },
-        { fps: 10 },
-        (code) => {
-          if (detectedRef.current) return;
-          detectedRef.current = true;
-          scanner.stop().then(() => scanner.clear()).catch(() => {});
-          onDetect(code);
-        },
-        () => {}
+    const reader = new BrowserMultiFormatReader(hints);
+
+    reader
+      .decodeFromConstraints(
+        { video: { facingMode: "environment" } },
+        videoRef.current,
+        (result, _err, controls) => {
+          if (result) {
+            stopRef.current = controls;
+            controls.stop();
+            onDetect(result.getText());
+          }
+        }
       )
-      .catch(() => setCamError("Camera access denied. Please allow camera permission and try again."));
+      .catch(() => setCamError("Camera access denied. Please allow camera permission."));
 
     return () => {
-      if (html5QrRef.current?.isScanning) {
-        html5QrRef.current.stop().then(() => html5QrRef.current.clear()).catch(() => {});
-      }
+      stopRef.current?.stop();
+      reader.reset();
     };
   }, []);
 
   return (
-    <div className="fixed inset-0 z-[60] flex flex-col" style={{ backgroundColor: "#000" }}>
+    <div className="fixed inset-0 z-[60] flex flex-col bg-black">
       <div
         className="flex items-center justify-between px-4 py-4 shrink-0"
         style={{ backgroundColor: "rgba(0,0,0,0.75)" }}
@@ -587,8 +587,14 @@ function BarcodeScanner({ onDetect, onClose }) {
       </div>
 
       <div className="flex-1 relative overflow-hidden">
-        <div id="__bcsv__" style={{ width: "100%", height: "100%" }} />
-        {/* Corner bracket overlay */}
+        <video
+          ref={videoRef}
+          className="w-full h-full object-cover"
+          autoPlay
+          playsInline
+          muted
+        />
+        {/* Corner brackets — visual guide only, full frame is scanned */}
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <div className="relative" style={{ width: 280, height: 110 }}>
             <div className="absolute top-0 left-0 w-7 h-7 border-t-[3px] border-l-[3px] border-emerald-400" />
