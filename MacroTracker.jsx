@@ -214,6 +214,56 @@ function reducer(state, action) {
         },
       };
 
+    case "ADD_ENTRY_TO_DATE": {
+      const { date, name, calories, protein } = action.payload;
+      const entry = {
+        id: generateId(),
+        name: name || "Food",
+        calories: Math.max(0, Math.min(10000, Number(calories) || 0)),
+        protein: Math.max(0, Math.min(1000, Number(protein) || 0)),
+        time: new Date().toISOString(),
+      };
+      let newFrequent = [...(state.frequentFoods || [])];
+      const fi = newFrequent.findIndex((f) => f.name.toLowerCase() === entry.name.toLowerCase());
+      if (fi >= 0) {
+        newFrequent[fi] = { ...newFrequent[fi], count: newFrequent[fi].count + 1, calories: entry.calories, protein: entry.protein };
+      } else {
+        newFrequent.push({ name: entry.name, calories: entry.calories, protein: entry.protein, count: 1 });
+      }
+      newFrequent.sort((a, b) => b.count - a.count);
+      newFrequent = newFrequent.slice(0, MAX_FREQUENT_FOODS);
+      const existingIdx = (state.history || []).findIndex((d) => d.date === date);
+      let newHistory;
+      if (existingIdx >= 0) {
+        newHistory = state.history.map((d, i) => {
+          if (i !== existingIdx) return d;
+          const entries = [...d.entries, entry];
+          return { ...d, entries, totalCalories: entries.reduce((s, e) => s + e.calories, 0), totalProtein: entries.reduce((s, e) => s + e.protein, 0) };
+        });
+      } else {
+        const newDay = {
+          date,
+          goalCalories: state.goals.calories,
+          goalProtein: state.goals.protein,
+          totalCalories: entry.calories,
+          totalProtein: entry.protein,
+          entries: [entry],
+        };
+        newHistory = [...(state.history || []), newDay].sort((a, b) => b.date.localeCompare(a.date));
+      }
+      return { ...state, history: newHistory, frequentFoods: newFrequent };
+    }
+
+    case "DELETE_ENTRY_FROM_DATE": {
+      const { date, id } = action.payload;
+      const newHistory = (state.history || []).map((d) => {
+        if (d.date !== date) return d;
+        const entries = d.entries.filter((e) => e.id !== id);
+        return { ...d, entries, totalCalories: entries.reduce((s, e) => s + e.calories, 0), totalProtein: entries.reduce((s, e) => s + e.protein, 0) };
+      });
+      return { ...state, history: newHistory };
+    }
+
     case "UPDATE_GOALS":
       return {
         ...state,
@@ -804,6 +854,8 @@ function AddEntryModal({ state, dispatch, onClose, onScanOpen, scanNotFound }) {
   const isDark = state.theme === "dark";
   const topFoods = (state.frequentFoods || []).slice(0, 6);
 
+  const todayDate = getLocalDateString();
+  const [selectedDate, setSelectedDate] = useState(todayDate);
   const [name, setName] = useState("");
   const [calories, setCalories] = useState("");
   const [protein, setProtein] = useState("");
@@ -834,10 +886,11 @@ function AddEntryModal({ state, dispatch, onClose, onScanOpen, scanNotFound }) {
     if (err) { setError(err); return; }
 
     const foodName = name.trim() || "Food";
-    dispatch({
-      type: "ADD_ENTRY",
-      payload: { name: foodName, calories: Number(calories), protein: Number(protein) },
-    });
+    if (selectedDate === todayDate) {
+      dispatch({ type: "ADD_ENTRY", payload: { name: foodName, calories: Number(calories), protein: Number(protein) } });
+    } else {
+      dispatch({ type: "ADD_ENTRY_TO_DATE", payload: { date: selectedDate, name: foodName, calories: Number(calories), protein: Number(protein) } });
+    }
 
     setLastAdded({ name: foodName, calories, protein });
     setName("");
@@ -912,6 +965,37 @@ function AddEntryModal({ state, dispatch, onClose, onScanOpen, scanNotFound }) {
             Product not found — enter nutrition manually.
           </div>
         )}
+
+        {/* Date selector */}
+        {(() => {
+          const selectableDates = [
+            { value: todayDate, label: "Today" },
+            ...(state.history || []).slice(0, 6).map((d) => {
+              const [y, mo, dy] = d.date.split("-").map(Number);
+              return {
+                value: d.date,
+                label: new Date(y, mo - 1, dy).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }),
+              };
+            }),
+          ];
+          return (
+            <div className="flex gap-2 overflow-x-auto pb-1 mb-5" style={{ scrollbarWidth: "none" }}>
+              {selectableDates.map((d) => (
+                <button
+                  key={d.value}
+                  onClick={() => setSelectedDate(d.value)}
+                  className="shrink-0 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
+                  style={{
+                    backgroundColor: selectedDate === d.value ? "#10b981" : isDark ? "#27272a" : "#f4f4f5",
+                    color: selectedDate === d.value ? "#fff" : isDark ? "#a1a1aa" : "#71717a",
+                  }}
+                >
+                  {d.label}
+                </button>
+              ))}
+            </div>
+          );
+        })()}
 
         {/* Success feedback */}
         {lastAdded && (
@@ -1017,6 +1101,22 @@ function HistoryScreen({ state, dispatch }) {
   const history = state.history || [];
   const excludedDates = new Set(state.excludedDates || []);
   const [expandedDate, setExpandedDate] = useState(null);
+  const [pendingDelete, setPendingDelete] = useState(null);
+  const deleteTimerRef = useRef(null);
+  useEffect(() => () => clearTimeout(deleteTimerRef.current), []);
+
+  const handleDeleteEntry = (date, id) => {
+    const key = `${date}:${id}`;
+    if (pendingDelete === key) {
+      clearTimeout(deleteTimerRef.current);
+      dispatch({ type: "DELETE_ENTRY_FROM_DATE", payload: { date, id } });
+      setPendingDelete(null);
+    } else {
+      setPendingDelete(key);
+      clearTimeout(deleteTimerRef.current);
+      deleteTimerRef.current = setTimeout(() => setPendingDelete(null), 3000);
+    }
+  };
 
   const text = isDark ? "text-white" : "text-zinc-900";
   const muted = isDark ? "text-zinc-400" : "text-zinc-500";
@@ -1203,21 +1303,35 @@ function HistoryScreen({ state, dispatch }) {
                       ) : (
                         <>
                           <div className="flex flex-col gap-1 pt-3">
-                            {day.entries.map((entry) => (
-                              <div
-                                key={entry.id}
-                                className="flex justify-between items-center py-1"
-                              >
-                                <div>
-                                  <span className={`text-sm font-medium ${text}`}>{entry.name}</span>
-                                  <span className={`text-xs ml-2 ${muted}`}>{formatTime(entry.time)}</span>
+                            {day.entries.map((entry) => {
+                              const isPending = pendingDelete === `${day.date}:${entry.id}`;
+                              return (
+                                <div
+                                  key={entry.id}
+                                  className="flex items-center gap-2 py-1"
+                                >
+                                  <div className="flex-1 min-w-0">
+                                    <span className={`text-sm font-medium ${text}`}>{entry.name}</span>
+                                    <span className={`text-xs ml-2 ${muted}`}>{formatTime(entry.time)}</span>
+                                  </div>
+                                  <div className="text-right text-sm shrink-0">
+                                    <span className="text-emerald-400">{entry.calories} kcal</span>
+                                    <span className={`ml-2 ${muted}`}>{entry.protein}g</span>
+                                  </div>
+                                  <button
+                                    onClick={() => handleDeleteEntry(day.date, entry.id)}
+                                    className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 transition-colors"
+                                    style={{
+                                      backgroundColor: isPending ? "#ef4444" : isDark ? "#27272a" : "#f4f4f5",
+                                      color: isPending ? "#fff" : isDark ? "#71717a" : "#a1a1aa",
+                                    }}
+                                    aria-label={isPending ? "Confirm delete" : "Delete entry"}
+                                  >
+                                    {isPending ? <Check size={13} /> : <Trash2 size={13} />}
+                                  </button>
                                 </div>
-                                <div className="text-right text-sm">
-                                  <span className="text-emerald-400">{entry.calories} kcal</span>
-                                  <span className={`ml-2 ${muted}`}>{entry.protein}g</span>
-                                </div>
-                              </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         </>
                       )}
