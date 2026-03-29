@@ -10,10 +10,10 @@ import {
 import {
   Plus, Flame, History, Settings, Trash2, X, Moon, Sun,
   ChevronUp, ChevronDown, Check, RotateCcw, Target, Scale, EyeOff, Eye,
-  ScanBarcode, Loader2,
+  // ScanBarcode, Loader2,  // barcode scanner — commented out
 } from "lucide-react";
-import { BrowserMultiFormatReader } from "@zxing/browser";
-import { DecodeHintType, BarcodeFormat } from "@zxing/library";
+// import { BrowserMultiFormatReader } from "@zxing/browser";   // barcode scanner — commented out
+// import { DecodeHintType, BarcodeFormat } from "@zxing/library"; // barcode scanner — commented out
 
 // ============================================================
 // CONSTANTS & UTILITIES
@@ -49,7 +49,7 @@ function generateId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
-/** Fetches nutrition data from Open Food Facts by barcode. Returns null if not found. */
+/* BARCODE SCANNER — commented out
 async function fetchProductByBarcode(barcode) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 8000);
@@ -85,6 +85,7 @@ async function fetchProductByBarcode(barcode) {
     servingSize,
   };
 }
+*/
 
 /** Formats "2026-02-23" → "Monday, Feb 23" */
 function formatDate(dateStr) {
@@ -424,7 +425,7 @@ function ProgressRing({ value, goal, label, unit, isDark, size = 150, strokeWidt
 // TODAY SCREEN  (Dashboard)
 // ============================================================
 
-function TodayScreen({ state, dispatch, onAddEntry, onScanOpen }) {
+function TodayScreen({ state, dispatch, onAddEntry }) {
   const { today, goals } = state;
   const isDark = state.theme === "dark";
   const entries = today?.entries || [];
@@ -458,6 +459,7 @@ function TodayScreen({ state, dispatch, onAddEntry, onScanOpen }) {
     <div className="flex flex-col gap-5 pb-28 pt-4">
       {/* Page header */}
       <div className="relative flex items-center justify-center">
+        {/* BARCODE SCANNER — commented out
         {onScanOpen && (
           <button
             onClick={onScanOpen}
@@ -468,6 +470,7 @@ function TodayScreen({ state, dispatch, onAddEntry, onScanOpen }) {
             <ScanBarcode size={20} />
           </button>
         )}
+        */}
         <div className="text-center">
           <h1 className={`text-2xl font-bold ${text}`}>Today</h1>
           <p className={`text-sm ${muted}`}>{formatDate(today?.date)}</p>
@@ -591,6 +594,7 @@ function TodayScreen({ state, dispatch, onAddEntry, onScanOpen }) {
 // BARCODE SCANNER
 // ============================================================
 
+/* BARCODE SCANNER COMPONENT — commented out
 function BarcodeScanner({ onDetect, onClose }) {
   const videoRef = useRef(null);
   const [camError, setCamError] = useState("");
@@ -614,7 +618,6 @@ function BarcodeScanner({ onDetect, onClose }) {
     };
 
     (async () => {
-      // 1. Get camera stream ourselves so we control cleanup
       try {
         mediaStream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: "environment" },
@@ -629,7 +632,6 @@ function BarcodeScanner({ onDetect, onClose }) {
       try { await video.play(); } catch {}
       if (!active) { stopAll(); return; }
 
-      // ZXing setup — used both as parallel booster and as sole fallback
       const hints = new Map([
         [DecodeHintType.POSSIBLE_FORMATS, [
           BarcodeFormat.UPC_A, BarcodeFormat.UPC_E,
@@ -641,7 +643,6 @@ function BarcodeScanner({ onDetect, onClose }) {
       const canvas = document.createElement("canvas");
       const ctx = canvas.getContext("2d");
 
-      // 2a. Native BarcodeDetector — iOS 17+, Chrome 83+
       if ("BarcodeDetector" in window) {
         const supported = await window.BarcodeDetector.getSupportedFormats();
         const detector = new window.BarcodeDetector({ formats: supported });
@@ -666,7 +667,6 @@ function BarcodeScanner({ onDetect, onClose }) {
         return;
       }
 
-      // 2b. ZXing canvas only — older browsers
       let lastScan = 0;
       const loop = () => {
         if (!active) return;
@@ -716,7 +716,6 @@ function BarcodeScanner({ onDetect, onClose }) {
           playsInline
           muted
         />
-        {/* Corner brackets — visual guide only, full frame is scanned */}
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <div className="relative" style={{ width: 280, height: 110 }}>
             <div className="absolute top-0 left-0 w-7 h-7 border-t-[3px] border-l-[3px] border-emerald-400" />
@@ -735,6 +734,7 @@ function BarcodeScanner({ onDetect, onClose }) {
     </div>
   );
 }
+*/
 
 // ============================================================
 // SCAN SERVING CARD
@@ -848,9 +848,118 @@ function ScanServingCard({ product, onAdd, onManual, onClose, isDark }) {
   );
 }
 
+/* SCAN SERVING CARD COMPONENT — commented out
+function ScanServingCard({ product, onAdd, onManual, onClose, isDark }) {
+  const { name, cal100g, prot100g, hasServing, calServing, protServing, servingSize } = product;
+  const [amount, setAmount] = useState(hasServing ? "1" : "100");
+
+  const numAmount = parseFloat(amount) || 0;
+  const calcCal = hasServing
+    ? Math.round((calServing ?? 0) * numAmount)
+    : Math.round(((cal100g ?? 0) / 100) * numAmount);
+  const calcProt = hasServing
+    ? Math.round(((protServing ?? 0) * numAmount) * 10) / 10
+    : Math.round(((prot100g ?? 0) / 100) * numAmount * 10) / 10;
+
+  const card = isDark ? "bg-zinc-900" : "bg-white";
+  const text = isDark ? "text-white" : "text-zinc-900";
+  const muted = isDark ? "text-zinc-400" : "text-zinc-500";
+  const inputClass = `w-full text-center text-2xl font-bold py-3 px-4 rounded-xl outline-none transition-colors ${
+    isDark
+      ? "bg-zinc-800 text-white border border-zinc-700 focus:border-emerald-500"
+      : "bg-zinc-50 text-zinc-900 border border-zinc-200 focus:border-emerald-500"
+  }`;
+
+  return (
+    <div className="fixed inset-0 z-[55] flex items-end sm:items-center justify-center">
+      <div
+        className="absolute inset-0"
+        style={{ backgroundColor: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)" }}
+        onClick={onClose}
+      />
+      <div
+        className={`relative w-full max-w-md rounded-t-3xl sm:rounded-3xl p-6 shadow-2xl ${card}`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex justify-between items-start mb-5">
+          <div className="flex-1 min-w-0 pr-3">
+            <p className="text-xs font-semibold tracking-widest mb-1 text-emerald-400">PRODUCT FOUND</p>
+            <h2 className={`text-lg font-bold leading-snug ${text}`}>{name || "Unknown Product"}</h2>
+          </div>
+          <button
+            onClick={onClose}
+            className="w-9 h-9 rounded-full flex items-center justify-center shrink-0"
+            style={{ backgroundColor: isDark ? "#27272a" : "#f4f4f5", color: isDark ? "#a1a1aa" : "#71717a" }}
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="mb-4">
+          <label className={`text-sm font-medium mb-2 block ${muted}`}>
+            {hasServing
+              ? `Servings${servingSize ? ` (1 serving = ${servingSize})` : ""}`
+              : "Amount (grams)"}
+          </label>
+          <input
+            type="number"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            min="0"
+            step={hasServing ? "0.5" : "1"}
+            className={inputClass}
+            autoFocus
+          />
+          {hasServing && (
+            <p className={`text-xs mt-1.5 ${muted}`}>
+              Per serving: {calServing} kcal · {protServing}g protein
+            </p>
+          )}
+        </div>
+
+        <div className="flex gap-3 mb-5">
+          <div
+            className="flex-1 rounded-xl p-3 text-center"
+            style={{ backgroundColor: isDark ? "#27272a" : "#f4f4f5" }}
+          >
+            <p className="text-xl font-bold text-emerald-400">{calcCal.toLocaleString()}</p>
+            <p className={`text-xs mt-0.5 ${muted}`}>kcal</p>
+          </div>
+          <div
+            className="flex-1 rounded-xl p-3 text-center"
+            style={{ backgroundColor: isDark ? "#27272a" : "#f4f4f5" }}
+          >
+            <p className="text-xl font-bold text-blue-400">{calcProt}g</p>
+            <p className={`text-xs mt-0.5 ${muted}`}>protein</p>
+          </div>
+        </div>
+
+        <button
+          onClick={() => {
+            if (numAmount <= 0) return;
+            onAdd({ name: name || "Scanned item", calories: calcCal, protein: calcProt });
+          }}
+          className="w-full py-4 bg-emerald-500 hover:bg-emerald-400 text-white font-semibold rounded-xl text-base transition-colors mb-3"
+        >
+          Add Entry
+        </button>
+        <button
+          onClick={onManual}
+          className={`w-full py-2 text-sm text-center ${muted}`}
+        >
+          Enter manually instead
+        </button>
+      </div>
+    </div>
+  );
+}
+*/
+
+// ============================================================
+// ADD ENTRY MODAL
 // ============================================================
 
-function AddEntryModal({ state, dispatch, onClose, onScanOpen, scanNotFound }) {
+function AddEntryModal({ state, dispatch, onClose }) {
   const isDark = state.theme === "dark";
   const topFoods = (state.frequentFoods || []).slice(0, 6);
 
@@ -938,6 +1047,7 @@ function AddEntryModal({ state, dispatch, onClose, onScanOpen, scanNotFound }) {
         <div className="flex justify-between items-center mb-5">
           <div className="flex items-center gap-2">
             <h2 className={`text-xl font-bold ${text}`}>Add Food</h2>
+            {/* BARCODE SCANNER — commented out
             {onScanOpen && (
               <button
                 onClick={onScanOpen}
@@ -948,6 +1058,7 @@ function AddEntryModal({ state, dispatch, onClose, onScanOpen, scanNotFound }) {
                 <ScanBarcode size={18} />
               </button>
             )}
+            */}
           </div>
           <button
             onClick={onClose}
@@ -958,13 +1069,14 @@ function AddEntryModal({ state, dispatch, onClose, onScanOpen, scanNotFound }) {
           </button>
         </div>
 
-        {/* Scan not-found banner */}
+        {/* BARCODE SCANNER — commented out
         {scanNotFound && (
           <div className="mb-4 px-4 py-2.5 rounded-xl text-sm text-red-400 border"
             style={{ backgroundColor: "rgba(239,68,68,0.08)", borderColor: "rgba(239,68,68,0.25)" }}>
             Product not found — enter nutrition manually.
           </div>
         )}
+        */}
 
         {/* Date selector */}
         {(() => {
@@ -1851,10 +1963,12 @@ export default function MacroTracker() {
 
   const [activeTab, setActiveTab] = useState("today");
   const [showAddModal, setShowAddModal] = useState(false);
+  /* BARCODE SCANNER — commented out
   const [showScanner, setShowScanner] = useState(false);
   const [scanProduct, setScanProduct] = useState(null);
   const [scanNotFound, setScanNotFound] = useState(false);
   const [scanLoading, setScanLoading] = useState(false);
+  */
 
   const isDark = state.theme === "dark";
 
@@ -1891,6 +2005,7 @@ export default function MacroTracker() {
     setActiveTab("today");
   };
 
+  /* BARCODE SCANNER — commented out
   const handleScanOpen = () => {
     setShowAddModal(true);
     setActiveTab("today");
@@ -1915,6 +2030,7 @@ export default function MacroTracker() {
       setScanLoading(false);
     }
   };
+  */
 
   const bgColor = isDark ? "#09090b" : "#f4f4f5";
 
@@ -1936,7 +2052,7 @@ export default function MacroTracker() {
         <div className="mx-auto max-w-lg min-h-screen relative flex flex-col">
           <div className="flex-1 overflow-y-auto px-4">
             {activeTab === "today" && (
-              <TodayScreen state={state} dispatch={dispatch} onAddEntry={handleAddEntry} onScanOpen={handleScanOpen} />
+              <TodayScreen state={state} dispatch={dispatch} onAddEntry={handleAddEntry} />
             )}
             {activeTab === "weight" && <WeightScreen state={state} dispatch={dispatch} />}
             {activeTab === "history" && <HistoryScreen state={state} dispatch={dispatch} />}
@@ -1958,12 +2074,10 @@ export default function MacroTracker() {
           state={state}
           dispatch={dispatch}
           onClose={() => setShowAddModal(false)}
-          onScanOpen={() => setShowScanner(true)}
-          scanNotFound={scanNotFound}
         />
       )}
 
-      {/* Barcode scanner overlay */}
+      {/* BARCODE SCANNER — commented out
       {showScanner && (
         <BarcodeScanner
           onDetect={handleBarcodeDetected}
@@ -1971,7 +2085,6 @@ export default function MacroTracker() {
         />
       )}
 
-      {/* Scan loading indicator */}
       {scanLoading && (
         <div className="fixed inset-0 z-[58] flex items-center justify-center" style={{ backgroundColor: "rgba(0,0,0,0.5)" }}>
           <div className="flex flex-col items-center gap-3">
@@ -1981,7 +2094,6 @@ export default function MacroTracker() {
         </div>
       )}
 
-      {/* Scan result serving card */}
       {scanProduct && (
         <ScanServingCard
           product={scanProduct}
@@ -1994,6 +2106,7 @@ export default function MacroTracker() {
           onClose={() => setScanProduct(null)}
         />
       )}
+      */}
 
       <Analytics />
     </>
