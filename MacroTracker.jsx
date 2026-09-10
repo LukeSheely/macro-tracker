@@ -1,12 +1,9 @@
 // MacroTracker.jsx
 // Single-file macro & calorie tracker — no backend, localStorage only.
-// Libraries: React, Recharts, lucide-react, Tailwind CSS
+// Libraries: React and lucide-react; UI styles are scoped to this file.
 
 import { useState, useEffect, useReducer, useRef } from "react";
 import { Analytics } from "@vercel/analytics/react";
-import {
-  BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine,
-} from "recharts";
 import {
   Plus, Flame, History, Settings, Trash2, X, Moon, Sun,
   ChevronUp, ChevronDown, Check, RotateCcw, Target, Scale, EyeOff, Eye,
@@ -325,1790 +322,329 @@ function reducer(state, action) {
   }
 }
 
-// ============================================================
-// PROGRESS RING  (SVG-based animated circular progress)
-// ============================================================
 
-function ProgressRing({ value, goal, label, unit, isDark, size = 150, strokeWidth = 11 }) {
-  const radius = (size - strokeWidth) / 2;
-  const circumference = 2 * Math.PI * radius;
-  const pct = goal > 0 ? value / goal : 0;
-  // Allow the ring to overfill slightly past 100% to signal overage
-  const clampedPct = Math.min(pct, 1.05);
-  const dashOffset = circumference - clampedPct * circumference;
+// UI is self-contained so the shared stylesheet and persisted schema stay independent.
+const UI_CSS = `
+.mt { --bg:#f3f4f6; --surface:#fff; --subtle:#f0f2f5; --ink:#20232b; --muted:#646b78; --line:#e6e8ed; --green:#16744f; --green-soft:#e7f4ed; --blue:#2767bf; --glass:rgba(249,250,252,.88); --danger:#bd3542; min-height:100dvh; background:var(--bg); color:var(--ink); font:400 16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color-scheme:light; }
+.mt[data-theme="dark"] { --bg:#111416; --surface:#1d2225; --subtle:#282e32; --ink:#f3f5f4; --muted:#a5aeb3; --line:#333a3f; --green:#7bd6ac; --green-soft:#253e34; --blue:#91bcff; --glass:rgba(26,31,34,.91); --danger:#ff919b; color-scheme:dark; }
+.mt * { box-sizing:border-box; } .mt button,.mt input,.mt select { font:inherit; }
+.mt button { cursor:pointer; touch-action:manipulation; -webkit-tap-highlight-color:transparent; transition:background-color .15s,transform .15s,opacity .15s; }
+.mt button:active { transform:scale(.97); transition-duration:0s; }
+.mt button:disabled { opacity:.45; cursor:default; } .mt :focus-visible { outline:3px solid var(--blue); outline-offset:4px; }
+.mt h1,.mt h2,.mt h3,.mt p { margin:0; } .mt h1 { font-size:clamp(2.1rem,5vw,2.85rem); line-height:1.1; letter-spacing:-.045em; font-weight:750; }
+.mt h2 { font-size:1.18rem; line-height:1.3; letter-spacing:-.025em; font-weight:700; } .mt h3 { font-size:1rem; font-weight:650; }
+.mt small,.mt .muted { color:var(--muted); } .mt small { font-size:.8rem; }
+.mt .eyebrow { color:var(--muted); font-size:.72rem; font-weight:650; letter-spacing:.11em; text-transform:uppercase; }
+.mt .shell { max-width:1040px; margin:auto; padding:28px 32px 136px; }
+.mt .brand { display:flex; align-items:center; gap:9px; color:var(--green); font-size:.9rem; font-weight:750; letter-spacing:-.02em; margin-bottom:35px; }
+.mt .brand small { margin-left:auto; font-weight:400; letter-spacing:0; }
+.mt .header { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:28px; }
+.mt .header .eyebrow { margin-bottom:9px; } .mt .header p:last-child { margin-top:10px; }
+.mt .row { display:flex; align-items:center; gap:12px; } .mt .between { justify-content:space-between; }
+.mt .stack { display:grid; gap:20px; } .mt .columns { display:grid; grid-template-columns:1.05fr 1fr; gap:24px; align-items:start; }
+.mt .card { background:var(--surface); border:1px solid var(--line); border-radius:25px; overflow:hidden; box-shadow:0 3px 9px #00000002; }
+.mt .pad { padding:24px; } .mt .section-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:18px; }
+.mt .button { min-height:48px; border:0; border-radius:15px; display:inline-flex; justify-content:center; align-items:center; gap:8px; padding:11px 18px; font-weight:650; background:var(--subtle); color:var(--ink); }
+.mt .primary { background:var(--green); color:var(--surface); } .mt .soft { background:var(--green-soft); color:var(--green); } .mt .danger { color:var(--danger); }
+.mt .icon { width:44px; height:44px; flex-shrink:0; padding:0; border-radius:50%; border:0; display:inline-flex; align-items:center; justify-content:center; color:var(--muted); background:var(--subtle); }
+.mt .full { width:100%; } .mt .text-button { border:0; background:transparent; min-height:44px; color:var(--green); font-weight:650; padding:8px; }
+.mt .hero { padding:26px; } .mt .ring-area { position:relative; width:230px; height:230px; margin:24px auto; }
+.mt .ring-area svg { width:100%; height:100%; transform:rotate(-90deg); }
+.mt .ring-center { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+.mt .number { font-size:2.9rem; font-weight:730; letter-spacing:-.055em; line-height:1.15; font-variant-numeric:tabular-nums; }
+.mt .ring-center small { margin-top:5px; } .mt .ring-progress { transition:stroke-dasharray .45s ease; }
+.mt .stats { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
+.mt .stat { padding:16px; background:var(--subtle); border-radius:17px; }
+.mt .stat strong { display:block; font-size:1.45rem; letter-spacing:-.035em; font-variant-numeric:tabular-nums; }
+.mt .track { height:6px; border-radius:8px; background:var(--line); overflow:hidden; margin-top:12px; } .mt .track span { display:block; height:100%; border-radius:8px; transition:width .4s; }
+.mt .note { font-size:.84rem; color:var(--muted); line-height:1.55; } .mt .hero>.note { text-align:center; margin-top:20px; }
+.mt .food-row { padding:17px 20px; border-top:1px solid var(--line); display:flex; gap:12px; align-items:center; }
+.mt .food-row:first-child { border-top:0; } .mt .food-glyph { height:42px; width:42px; flex-shrink:0; border-radius:14px; background:var(--green-soft); color:var(--green); display:grid; place-items:center; }
+.mt .grow { flex:1; min-width:0; } .mt .food-name { font-weight:600; overflow-wrap:anywhere; } .mt .numeric { text-align:right; font-variant-numeric:tabular-nums; flex-shrink:0; }
+.mt .numeric strong { font-size:.95rem; } .mt .numeric small { display:block; }
+.mt .empty { text-align:center; padding:40px 24px; } .mt .empty-icon { width:62px; height:62px; border-radius:22px; margin:0 auto 16px; display:grid; place-items:center; background:var(--green-soft); color:var(--green); }
+.mt .empty p { max-width:310px; margin:8px auto 20px; font-size:.9rem; color:var(--muted); }
+.mt .nav { position:fixed; z-index:20; bottom:max(16px,env(safe-area-inset-bottom)); left:50%; transform:translateX(-50%); display:flex; width:min(460px,calc(100% - 24px)); padding:7px; background:var(--glass); backdrop-filter:blur(24px) saturate(150%); border:1px solid var(--line); border-radius:25px; box-shadow:0 8px 36px #00000013; }
+.mt .nav button { flex:1; min-height:59px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px; border:0; border-radius:19px; background:transparent; color:var(--muted); font-size:.68rem; font-weight:600; }
+.mt .nav button[aria-current="page"] { background:var(--green-soft); color:var(--green); }
+.mt .segments { display:flex; padding:4px; border-radius:13px; background:var(--subtle); gap:3px; }
+.mt .segments button { flex:1; min-height:44px; padding:8px 13px; border:0; border-radius:10px; background:transparent; color:var(--muted); font-weight:600; }
+.mt .segments button[aria-pressed="true"] { background:var(--surface); color:var(--ink); box-shadow:0 2px 6px #00000008; }
+.mt .history-heading { width:100%; text-align:left; padding:20px; border:0; background:transparent; color:var(--ink); display:flex; gap:12px; align-items:center; }
+.mt .history-heading small { display:block; margin-top:4px; } .mt .history-details { border-top:1px solid var(--line); } .mt .history-actions { padding:12px 20px; display:flex; justify-content:space-between; align-items:center; gap:10px; }
+.mt .badge { display:inline-flex; align-items:center; gap:5px; font-size:.72rem; padding:4px 8px; border-radius:7px; color:var(--muted); background:var(--subtle); }
+.mt .bars { height:130px; display:flex; align-items:end; gap:8px; margin:22px 0 12px; } .mt .bar { flex:1; height:100%; display:flex; flex-direction:column; align-items:center; justify-content:end; gap:7px; } .mt .bar span { width:100%; max-width:34px; min-height:3px; border-radius:5px; background:var(--green); } .mt .bar small { font-size:.62rem; }
+.mt .chart { width:100%; height:220px; margin-top:20px; } .mt .chart svg { overflow:visible; width:100%; height:100%; }
+.mt label { display:grid; gap:7px; font-size:.86rem; font-weight:600; } .mt input,.mt select { min-width:0; width:100%; min-height:50px; padding:12px 14px; background:var(--subtle); color:var(--ink); border:1px solid var(--line); border-radius:13px; outline-offset:2px; }
+.mt input::placeholder { color:var(--muted); font-weight:400; } .mt input[aria-invalid="true"] { border-color:var(--danger); }
+.mt .fields { display:grid; grid-template-columns:1fr 1fr; gap:14px; } .mt .form { display:grid; gap:19px; }
+.mt .error { color:var(--danger); font-size:.86rem; } .mt .success { display:flex; align-items:center; gap:8px; padding:12px 14px; background:var(--green-soft); color:var(--green); border-radius:12px; font-size:.86rem; }
+.mt .presets { display:flex; gap:6px; flex-wrap:wrap; } .mt .presets button { min-height:44px; padding:6px 12px; border:0; border-radius:10px; background:var(--subtle); color:var(--muted); font-size:.84rem; }
+.mt .presets button[aria-pressed="true"] { background:var(--green-soft); color:var(--green); }
+.mt .overlay { position:fixed; inset:0; z-index:40; display:flex; justify-content:center; align-items:end; }
+.mt .scrim { position:absolute; inset:0; background:rgba(0,0,0,.42); backdrop-filter:blur(4px); }
+.mt .sheet { position:relative; width:min(100%,540px); max-height:92dvh; overflow:auto; overscroll-behavior:contain; border-radius:30px 30px 0 0; background:var(--surface); border:1px solid var(--line); box-shadow:0 -10px 70px #00000024; padding:0 26px max(28px,env(safe-area-inset-bottom)); will-change:transform; }
+.mt .handle { display:block; width:100%; height:44px; border:0; background:transparent; touch-action:none; cursor:grab; } .mt .handle span { display:block; width:36px; height:5px; border-radius:9px; background:var(--line); margin:auto; }
+.mt .sheet-head { display:flex; align-items:center; justify-content:space-between; gap:14px; margin-bottom:24px; }
+.mt .recent { display:flex; gap:8px; overflow-x:auto; padding:4px 3px 10px; } .mt .recent button { flex-shrink:0; text-align:left; border:1px solid var(--line); border-radius:14px; background:var(--subtle); padding:12px 14px; color:var(--ink); max-width:230px; } .mt .recent small { display:block; }
+.mt .toast { position:fixed; z-index:60; bottom:108px; left:50%; transform:translateX(-50%); width:max-content; max-width:calc(100% - 32px); border-radius:15px; background:var(--ink); color:var(--surface); padding:13px 20px; box-shadow:0 8px 30px #0002; font-size:.9rem; pointer-events:none; }
+@media(max-width:700px) { .mt .shell { padding:24px 18px 126px; } .mt .brand { margin-bottom:27px; } .mt .columns { grid-template-columns:1fr; gap:20px; } .mt .header { margin-bottom:24px; } .mt .pad,.mt .hero { padding:20px; } .mt .ring-area { width:210px; height:210px; margin:18px auto; } .mt .header>.button { padding:12px; } }
+@media(max-width:380px) { .mt .food-glyph { display:none; } .mt .food-row { padding:14px; gap:8px; } .mt .fields { grid-template-columns:1fr; } .mt .brand small { display:none; } }
+@media(prefers-reduced-motion:reduce) { .mt *, .mt *::before,.mt *::after { transition:none!important; scroll-behavior:auto!important; } .mt button:active { transform:none; } }
+@media(prefers-reduced-transparency:reduce) { .mt .nav { background:var(--surface); backdrop-filter:none; } .mt .scrim { backdrop-filter:none; } }
+@media(prefers-contrast:more) { .mt { --muted:var(--ink); } .mt .card,.mt .nav,.mt input,.mt .sheet { border-color:var(--ink); } }
+`;
 
-  // Color thresholds
-  let ringColor;
-  if (pct > 1) ringColor = "#ef4444";       // red — over goal
-  else if (pct >= 0.75) ringColor = "#f59e0b"; // amber — close
-  else ringColor = "#10b981";               // emerald — on track
+const number = (value) => Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 1 });
+const totalEntries = (entries) => entries.reduce((sum, e) => ({ calories: sum.calories + e.calories, protein: sum.protein + e.protein }), { calories: 0, protein: 0 });
 
-  const remaining = goal - value;
-  const remainingLabel =
-    remaining > 0
-      ? `${remaining.toLocaleString()} ${unit} left`
-      : remaining < 0
-      ? `${Math.abs(remaining).toLocaleString()} ${unit} over`
-      : "Goal reached!";
-
-  const trackColor = isDark ? "#3f3f46" : "#e4e4e7";
-
-  return (
-    <div className="flex flex-col items-center gap-2">
-      <div className="relative" style={{ width: size, height: size }}>
-        {/* SVG rings */}
-        <svg
-          width={size}
-          height={size}
-          style={{ transform: "rotate(-90deg)", position: "absolute", top: 0, left: 0 }}
-        >
-          {/* Background track */}
-          <circle
-            cx={size / 2}
-            cy={size / 2}
-            r={radius}
-            fill="none"
-            stroke={trackColor}
-            strokeWidth={strokeWidth}
-          />
-          {/* Progress arc */}
-          <circle
-            cx={size / 2}
-            cy={size / 2}
-            r={radius}
-            fill="none"
-            stroke={ringColor}
-            strokeWidth={strokeWidth}
-            strokeDasharray={circumference}
-            strokeDashoffset={dashOffset}
-            strokeLinecap="round"
-            style={{
-              transition: "stroke-dashoffset 0.5s ease, stroke 0.3s ease",
-            }}
-          />
-        </svg>
-
-        {/* Center label */}
-        <div
-          style={{ position: "absolute", inset: 0 }}
-          className="flex flex-col items-center justify-center pointer-events-none"
-        >
-          <span className="text-lg font-bold leading-tight" style={{ color: ringColor }}>
-            {value.toLocaleString()}
-          </span>
-          <span className="text-xs leading-tight" style={{ color: isDark ? "#a1a1aa" : "#71717a" }}>
-            / {goal.toLocaleString()}
-          </span>
-          <span
-            className="text-xs font-medium mt-0.5 leading-tight"
-            style={{ color: isDark ? "#71717a" : "#a1a1aa" }}
-          >
-            {unit}
-          </span>
-        </div>
-      </div>
-
-      {/* Labels below ring */}
-      <div className="text-center">
-        <p className="text-sm font-semibold" style={{ color: isDark ? "#e4e4e7" : "#27272a" }}>
-          {label}
-        </p>
-        <p className="text-xs mt-0.5" style={{ color: isDark ? "#71717a" : "#a1a1aa" }}>
-          {remainingLabel}
-        </p>
-      </div>
-    </div>
-  );
+function Empty({ icon: Icon = Flame, title, children, action, onAction }) {
+  return <div className="empty"><div className="empty-icon"><Icon size={27} strokeWidth={1.6} /></div><h3>{title}</h3><p>{children}</p>{action && <button className="button soft" onClick={onAction}><Plus size={18} />{action}</button>}</div>;
 }
 
-// ============================================================
-// TODAY SCREEN  (Dashboard)
-// ============================================================
-
-function TodayScreen({ state, dispatch, onAddEntry }) {
-  const { today, goals } = state;
-  const isDark = state.theme === "dark";
-  const entries = today?.entries || [];
-
-  const totalCalories = entries.reduce((s, e) => s + (e.calories || 0), 0);
-  const totalProtein = entries.reduce((s, e) => s + (e.protein || 0), 0);
-
-  // Two-tap delete confirmation
-  const [pendingDelete, setPendingDelete] = useState(null);
-  const deleteTimerRef = useRef(null);
-
-  const handleDeleteClick = (id) => {
-    if (pendingDelete === id) {
-      clearTimeout(deleteTimerRef.current);
-      dispatch({ type: "DELETE_ENTRY", payload: id });
-      setPendingDelete(null);
-    } else {
-      setPendingDelete(id);
-      clearTimeout(deleteTimerRef.current);
-      deleteTimerRef.current = setTimeout(() => setPendingDelete(null), 3000);
-    }
+// A small damped spring keeps the sheet grabbable throughout opening and settling.
+// The same position and velocity are retained when its target changes.
+function Sheet({ title, onClose, children }) {
+  const panel = useRef(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  const physics = useRef({ y: 600, v: 0, target: 0, dragging: false, closing: false });
+  const gesture = useRef(null);
+  const dismiss = () => {
+    const p = physics.current;
+    p.closing = true;
+    p.target = (panel.current?.offsetHeight || 600) + 40;
   };
-
-  useEffect(() => () => clearTimeout(deleteTimerRef.current), []);
-
-  const card = isDark ? "bg-zinc-800" : "bg-white shadow-sm";
-  const text = isDark ? "text-white" : "text-zinc-900";
-  const muted = isDark ? "text-zinc-400" : "text-zinc-500";
-
-  return (
-    <div className="flex flex-col gap-5 pb-28 pt-4">
-      {/* Page header */}
-      <div className="relative flex items-center justify-center">
-        {/* BARCODE SCANNER — commented out
-        {onScanOpen && (
-          <button
-            onClick={onScanOpen}
-            className="sm:hidden absolute left-0 w-10 h-10 rounded-full flex items-center justify-center transition-colors"
-            style={{ backgroundColor: isDark ? "#27272a" : "#f4f4f5", color: isDark ? "#a1a1aa" : "#71717a" }}
-            aria-label="Scan barcode"
-          >
-            <ScanBarcode size={20} />
-          </button>
-        )}
-        */}
-        <div className="text-center">
-          <h1 className={`text-2xl font-bold ${text}`}>Today</h1>
-          <p className={`text-sm ${muted}`}>{formatDate(today?.date)}</p>
-        </div>
-      </div>
-
-      {/* Progress rings */}
-      <div className={`rounded-2xl p-5 ${card}`}>
-        <div className="flex justify-around items-start">
-          <ProgressRing
-            value={totalCalories}
-            goal={goals.calories}
-            label="Calories"
-            unit="kcal"
-            isDark={isDark}
-          />
-          <ProgressRing
-            value={totalProtein}
-            goal={goals.protein}
-            label="Protein"
-            unit="g"
-            isDark={isDark}
-          />
-        </div>
-      </div>
-
-      {/* Entries list */}
-      <div>
-        <div className="flex justify-between items-center mb-3">
-          <h2 className={`text-base font-semibold ${text}`}>
-            Today&apos;s Log ({entries.length})
-          </h2>
-          {entries.length > 0 && (
-            <span className={`text-xs ${muted}`}>Tap delete twice to confirm</span>
-          )}
-        </div>
-
-        {entries.length === 0 ? (
-          <div className={`rounded-2xl p-8 text-center ${card}`}>
-            <Flame className="mx-auto mb-2" size={32} color={isDark ? "#52525b" : "#a1a1aa"} />
-            <p className={muted}>No entries yet today.</p>
-            <p className={`text-sm mt-1 ${isDark ? "text-zinc-500" : "text-zinc-400"}`}>
-              Tap <strong>+</strong> to log your first meal.
-            </p>
-          </div>
-        ) : (
-          <div className="flex flex-col gap-2">
-            {entries.map((entry) => {
-              const isPending = pendingDelete === entry.id;
-              return (
-                <div
-                  key={entry.id}
-                  className={`rounded-xl px-4 py-3 flex items-center gap-3 ${card}`}
-                  style={{ animation: "fadeIn 0.2s ease" }}
-                >
-                  <div className="flex-1 min-w-0">
-                    <p className={`font-medium truncate ${text}`}>{entry.name}</p>
-                    <p className={`text-xs ${muted}`}>{formatTime(entry.time)}</p>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <p className="text-sm font-semibold text-emerald-400">
-                      {entry.calories.toLocaleString()} kcal
-                    </p>
-                    <p className={`text-xs ${muted}`}>{entry.protein}g protein</p>
-                  </div>
-                  <button
-                    onClick={() => handleDeleteClick(entry.id)}
-                    className="w-11 h-11 rounded-lg flex items-center justify-center shrink-0 transition-colors"
-                    style={{
-                      backgroundColor: isPending
-                        ? "#ef4444"
-                        : isDark
-                        ? "#27272a"
-                        : "#f4f4f5",
-                      color: isPending ? "#fff" : isDark ? "#71717a" : "#a1a1aa",
-                    }}
-                    aria-label={isPending ? "Confirm delete" : "Delete entry"}
-                  >
-                    {isPending ? <Check size={16} /> : <Trash2 size={16} />}
-                  </button>
-                </div>
-              );
-            })}
-
-            {/* Totals row */}
-            <div
-              className="rounded-xl px-4 py-3 flex justify-between items-center"
-              style={{
-                backgroundColor: isDark ? "#27272a" : "#f4f4f5",
-                borderTop: `2px solid ${isDark ? "#3f3f46" : "#e4e4e7"}`,
-              }}
-            >
-              <span className={`font-semibold ${muted}`}>Total</span>
-              <div className="flex gap-4">
-                <span className="font-bold text-emerald-400">
-                  {totalCalories.toLocaleString()} kcal
-                </span>
-                <span className={`font-medium ${muted}`}>{totalProtein}g protein</span>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Floating action button */}
-      <button
-        onClick={onAddEntry}
-        className="fixed bottom-24 right-4 w-14 h-14 bg-emerald-500 hover:bg-emerald-400 text-white rounded-full shadow-lg flex items-center justify-center transition-colors z-20"
-        style={{ boxShadow: "0 4px 24px rgba(16,185,129,0.4)" }}
-        aria-label="Add food entry"
-      >
-        <Plus size={24} />
-      </button>
-    </div>
-  );
-}
-
-// ============================================================
-// ADD ENTRY MODAL
-// ============================================================
-// BARCODE SCANNER
-// ============================================================
-
-/* BARCODE SCANNER COMPONENT — commented out
-function BarcodeScanner({ onDetect, onClose }) {
-  const videoRef = useRef(null);
-  const [camError, setCamError] = useState("");
-
   useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return;
-
-    let active = true;
-    let rafId = null;
-    let mediaStream = null;
-
-    const stopAll = () => {
-      active = false;
-      cancelAnimationFrame(rafId);
-      if (mediaStream) {
-        mediaStream.getTracks().forEach((t) => t.stop());
-        mediaStream = null;
+    const el = panel.current;
+    const previous = document.activeElement;
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const media = window.matchMedia("(prefers-reduced-motion: reduce)");
+    physics.current.y = media.matches ? 0 : el.offsetHeight + 40;
+    el.focus({ preventScroll: true });
+    let frame, last;
+    const tick = (now) => {
+      const p = physics.current;
+      const dt = Math.min((now - (last || now)) / 1000, .032);
+      last = now;
+      if (media.matches) {
+        p.y = 0;
+        if (p.closing) { closeRef.current(); return; }
+      } else if (!p.dragging) {
+        p.v += ((p.target - p.y) * 390 - p.v * 39) * dt;
+        p.y += p.v * dt;
+        if (p.closing && Math.abs(p.y - p.target) < 1 && Math.abs(p.v) < 8) { closeRef.current(); return; }
       }
-      if (video) video.srcObject = null;
+      el.style.transform = "translateY(" + p.y + "px)";
+      frame = requestAnimationFrame(tick);
     };
-
-    (async () => {
-      try {
-        mediaStream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "environment" },
-        });
-      } catch {
-        if (active) setCamError("Camera access denied. Please allow camera permission.");
-        return;
-      }
-      if (!active) { stopAll(); return; }
-
-      video.srcObject = mediaStream;
-      try { await video.play(); } catch {}
-      if (!active) { stopAll(); return; }
-
-      const hints = new Map([
-        [DecodeHintType.POSSIBLE_FORMATS, [
-          BarcodeFormat.UPC_A, BarcodeFormat.UPC_E,
-          BarcodeFormat.EAN_13, BarcodeFormat.EAN_8,
-        ]],
-        [DecodeHintType.TRY_HARDER, true],
-      ]);
-      const reader = new BrowserMultiFormatReader(hints);
-      const canvas = document.createElement("canvas");
-      const ctx = canvas.getContext("2d");
-
-      if ("BarcodeDetector" in window) {
-        const supported = await window.BarcodeDetector.getSupportedFormats();
-        const detector = new window.BarcodeDetector({ formats: supported });
-        let nativeScanning = false;
-        const loop = async () => {
-          if (!active) return;
-          if (!nativeScanning && video.readyState >= 2) {
-            nativeScanning = true;
-            try {
-              const codes = await detector.detect(video);
-              if (codes.length > 0 && active) {
-                stopAll();
-                onDetect(codes[0].rawValue);
-                return;
-              }
-            } catch {}
-            nativeScanning = false;
-          }
-          if (active) rafId = requestAnimationFrame(loop);
-        };
-        rafId = requestAnimationFrame(loop);
-        return;
-      }
-
-      let lastScan = 0;
-      const loop = () => {
-        if (!active) return;
-        const now = Date.now();
-        if (now - lastScan >= 150 && video.readyState >= 2 && video.videoWidth > 0) {
-          lastScan = now;
-          canvas.width = video.videoWidth;
-          canvas.height = video.videoHeight;
-          ctx.drawImage(video, 0, 0);
-          try {
-            const result = reader.decodeFromCanvas(canvas);
-            if (result && active) {
-              stopAll();
-              onDetect(result.getText());
-              return;
-            }
-          } catch {}
-        }
-        rafId = requestAnimationFrame(loop);
-      };
-      rafId = requestAnimationFrame(loop);
-    })();
-
-    return stopAll;
+    frame = requestAnimationFrame(tick);
+    return () => {
+      cancelAnimationFrame(frame);
+      document.body.style.overflow = overflow;
+      if (previous?.isConnected) previous.focus({ preventScroll: true });
+    };
   }, []);
-
-  return (
-    <div className="fixed inset-0 z-[60] flex flex-col bg-black">
-      <div
-        className="flex items-center justify-between px-4 py-4 shrink-0"
-        style={{ backgroundColor: "rgba(0,0,0,0.75)" }}
-      >
-        <span className="text-white font-semibold text-base">Scan Barcode</span>
-        <button
-          onClick={onClose}
-          className="w-9 h-9 rounded-full flex items-center justify-center"
-          style={{ backgroundColor: "rgba(255,255,255,0.15)" }}
-        >
-          <X size={18} color="#fff" />
-        </button>
-      </div>
-
-      <div className="flex-1 relative overflow-hidden">
-        <video
-          ref={videoRef}
-          className="w-full h-full object-cover"
-          playsInline
-          muted
-        />
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-          <div className="relative" style={{ width: 280, height: 110 }}>
-            <div className="absolute top-0 left-0 w-7 h-7 border-t-[3px] border-l-[3px] border-emerald-400" />
-            <div className="absolute top-0 right-0 w-7 h-7 border-t-[3px] border-r-[3px] border-emerald-400" />
-            <div className="absolute bottom-0 left-0 w-7 h-7 border-b-[3px] border-l-[3px] border-emerald-400" />
-            <div className="absolute bottom-0 right-0 w-7 h-7 border-b-[3px] border-r-[3px] border-emerald-400" />
-          </div>
-        </div>
-      </div>
-
-      {camError ? (
-        <p className="text-red-400 text-sm text-center px-6 py-6">{camError}</p>
-      ) : (
-        <p className="text-zinc-400 text-sm text-center py-6">Point camera at a product barcode</p>
-      )}
-    </div>
-  );
-}
-*/
-
-// ============================================================
-// SCAN SERVING CARD
-// ============================================================
-
-function ScanServingCard({ product, onAdd, onManual, onClose, isDark }) {
-  const { name, cal100g, prot100g, hasServing, calServing, protServing, servingSize } = product;
-  const [amount, setAmount] = useState(hasServing ? "1" : "100");
-
-  const numAmount = parseFloat(amount) || 0;
-  const calcCal = hasServing
-    ? Math.round((calServing ?? 0) * numAmount)
-    : Math.round(((cal100g ?? 0) / 100) * numAmount);
-  const calcProt = hasServing
-    ? Math.round(((protServing ?? 0) * numAmount) * 10) / 10
-    : Math.round(((prot100g ?? 0) / 100) * numAmount * 10) / 10;
-
-  const card = isDark ? "bg-zinc-900" : "bg-white";
-  const text = isDark ? "text-white" : "text-zinc-900";
-  const muted = isDark ? "text-zinc-400" : "text-zinc-500";
-  const inputClass = `w-full text-center text-2xl font-bold py-3 px-4 rounded-xl outline-none transition-colors ${
-    isDark
-      ? "bg-zinc-800 text-white border border-zinc-700 focus:border-emerald-500"
-      : "bg-zinc-50 text-zinc-900 border border-zinc-200 focus:border-emerald-500"
-  }`;
-
-  return (
-    <div className="fixed inset-0 z-[55] flex items-end sm:items-center justify-center">
-      <div
-        className="absolute inset-0"
-        style={{ backgroundColor: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)" }}
-        onClick={onClose}
-      />
-      <div
-        className={`relative w-full max-w-md rounded-t-3xl sm:rounded-3xl p-6 shadow-2xl ${card}`}
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="flex justify-between items-start mb-5">
-          <div className="flex-1 min-w-0 pr-3">
-            <p className="text-xs font-semibold tracking-widest mb-1 text-emerald-400">PRODUCT FOUND</p>
-            <h2 className={`text-lg font-bold leading-snug ${text}`}>{name || "Unknown Product"}</h2>
-          </div>
-          <button
-            onClick={onClose}
-            className="w-9 h-9 rounded-full flex items-center justify-center shrink-0"
-            style={{ backgroundColor: isDark ? "#27272a" : "#f4f4f5", color: isDark ? "#a1a1aa" : "#71717a" }}
-          >
-            <X size={18} />
-          </button>
-        </div>
-
-        {/* Amount input */}
-        <div className="mb-4">
-          <label className={`text-sm font-medium mb-2 block ${muted}`}>
-            {hasServing
-              ? `Servings${servingSize ? ` (1 serving = ${servingSize})` : ""}`
-              : "Amount (grams)"}
-          </label>
-          <input
-            type="number"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            min="0"
-            step={hasServing ? "0.5" : "1"}
-            className={inputClass}
-            autoFocus
-          />
-          {hasServing && (
-            <p className={`text-xs mt-1.5 ${muted}`}>
-              Per serving: {calServing} kcal · {protServing}g protein
-            </p>
-          )}
-        </div>
-
-        {/* Live totals */}
-        <div className="flex gap-3 mb-5">
-          <div
-            className="flex-1 rounded-xl p-3 text-center"
-            style={{ backgroundColor: isDark ? "#27272a" : "#f4f4f5" }}
-          >
-            <p className="text-xl font-bold text-emerald-400">{calcCal.toLocaleString()}</p>
-            <p className={`text-xs mt-0.5 ${muted}`}>kcal</p>
-          </div>
-          <div
-            className="flex-1 rounded-xl p-3 text-center"
-            style={{ backgroundColor: isDark ? "#27272a" : "#f4f4f5" }}
-          >
-            <p className="text-xl font-bold text-blue-400">{calcProt}g</p>
-            <p className={`text-xs mt-0.5 ${muted}`}>protein</p>
-          </div>
-        </div>
-
-        <button
-          onClick={() => {
-            if (numAmount <= 0) return;
-            onAdd({ name: name || "Scanned item", calories: calcCal, protein: calcProt });
-          }}
-          className="w-full py-4 bg-emerald-500 hover:bg-emerald-400 text-white font-semibold rounded-xl text-base transition-colors mb-3"
-        >
-          Add Entry
-        </button>
-        <button
-          onClick={onManual}
-          className={`w-full py-2 text-sm text-center ${muted}`}
-        >
-          Enter manually instead
-        </button>
-      </div>
-    </div>
-  );
+  const keyDown = (e) => {
+    if (e.key === "Escape") { e.preventDefault(); dismiss(); }
+    if (e.key === "Tab") {
+      const items = [...panel.current.querySelectorAll('button:not(:disabled),input:not(:disabled),select,textarea,[tabindex="0"]')];
+      const first = items[0], last = items[items.length - 1];
+      if (e.shiftKey && (document.activeElement === first || document.activeElement === panel.current)) { e.preventDefault(); last?.focus(); }
+      else if (!e.shiftKey && (document.activeElement === last || document.activeElement === panel.current)) { e.preventDefault(); first?.focus(); }
+    }
+  };
+  const release = (e, cancelled = false) => {
+    if (!gesture.current) return;
+    const p = physics.current;
+    if (e.timeStamp - gesture.current.time > 100) p.v = 0;
+    p.dragging = false;
+    p.closing = !cancelled && p.y + p.v * .16 > 150;
+    p.target = p.closing ? panel.current.offsetHeight + 40 : 0;
+    gesture.current = null;
+  };
+  return <div className="overlay">
+    <div className="scrim" onClick={dismiss} aria-hidden="true" />
+    <section className="sheet" ref={panel} role="dialog" aria-modal="true" aria-labelledby="sheet-title" tabIndex={-1} onKeyDown={keyDown}>
+      <button className="handle" aria-label="Close sheet; drag down to dismiss" onClick={(e) => { if (e.detail === 0) dismiss(); }}
+        onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); const p = physics.current; p.dragging = true; p.closing = false; gesture.current = { start: e.clientY, origin: p.y, last: e.clientY, time: e.timeStamp }; }}
+        onPointerMove={(e) => { const g = gesture.current; if (!g) return; const p = physics.current; const delta = e.clientY - g.start; p.y = Math.max(0, g.origin + delta); p.v = (e.clientY - g.last) / Math.max(1, e.timeStamp - g.time) * 1000; g.last = e.clientY; g.time = e.timeStamp; }}
+        onPointerUp={(e) => release(e)} onPointerCancel={(e) => release(e, true)}>
+        <span />
+      </button>
+      <div className="sheet-head"><h2 id="sheet-title">{title}</h2><button className="icon" aria-label="Close" onClick={dismiss}><X size={20} /></button></div>
+      {children}
+    </section>
+  </div>;
 }
 
-/* SCAN SERVING CARD COMPONENT — commented out
-function ScanServingCard({ product, onAdd, onManual, onClose, isDark }) {
-  const { name, cal100g, prot100g, hasServing, calServing, protServing, servingSize } = product;
-  const [amount, setAmount] = useState(hasServing ? "1" : "100");
-
-  const numAmount = parseFloat(amount) || 0;
-  const calcCal = hasServing
-    ? Math.round((calServing ?? 0) * numAmount)
-    : Math.round(((cal100g ?? 0) / 100) * numAmount);
-  const calcProt = hasServing
-    ? Math.round(((protServing ?? 0) * numAmount) * 10) / 10
-    : Math.round(((prot100g ?? 0) / 100) * numAmount * 10) / 10;
-
-  const card = isDark ? "bg-zinc-900" : "bg-white";
-  const text = isDark ? "text-white" : "text-zinc-900";
-  const muted = isDark ? "text-zinc-400" : "text-zinc-500";
-  const inputClass = `w-full text-center text-2xl font-bold py-3 px-4 rounded-xl outline-none transition-colors ${
-    isDark
-      ? "bg-zinc-800 text-white border border-zinc-700 focus:border-emerald-500"
-      : "bg-zinc-50 text-zinc-900 border border-zinc-200 focus:border-emerald-500"
-  }`;
-
-  return (
-    <div className="fixed inset-0 z-[55] flex items-end sm:items-center justify-center">
-      <div
-        className="absolute inset-0"
-        style={{ backgroundColor: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)" }}
-        onClick={onClose}
-      />
-      <div
-        className={`relative w-full max-w-md rounded-t-3xl sm:rounded-3xl p-6 shadow-2xl ${card}`}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex justify-between items-start mb-5">
-          <div className="flex-1 min-w-0 pr-3">
-            <p className="text-xs font-semibold tracking-widest mb-1 text-emerald-400">PRODUCT FOUND</p>
-            <h2 className={`text-lg font-bold leading-snug ${text}`}>{name || "Unknown Product"}</h2>
-          </div>
-          <button
-            onClick={onClose}
-            className="w-9 h-9 rounded-full flex items-center justify-center shrink-0"
-            style={{ backgroundColor: isDark ? "#27272a" : "#f4f4f5", color: isDark ? "#a1a1aa" : "#71717a" }}
-          >
-            <X size={18} />
-          </button>
-        </div>
-
-        <div className="mb-4">
-          <label className={`text-sm font-medium mb-2 block ${muted}`}>
-            {hasServing
-              ? `Servings${servingSize ? ` (1 serving = ${servingSize})` : ""}`
-              : "Amount (grams)"}
-          </label>
-          <input
-            type="number"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            min="0"
-            step={hasServing ? "0.5" : "1"}
-            className={inputClass}
-            autoFocus
-          />
-          {hasServing && (
-            <p className={`text-xs mt-1.5 ${muted}`}>
-              Per serving: {calServing} kcal · {protServing}g protein
-            </p>
-          )}
-        </div>
-
-        <div className="flex gap-3 mb-5">
-          <div
-            className="flex-1 rounded-xl p-3 text-center"
-            style={{ backgroundColor: isDark ? "#27272a" : "#f4f4f5" }}
-          >
-            <p className="text-xl font-bold text-emerald-400">{calcCal.toLocaleString()}</p>
-            <p className={`text-xs mt-0.5 ${muted}`}>kcal</p>
-          </div>
-          <div
-            className="flex-1 rounded-xl p-3 text-center"
-            style={{ backgroundColor: isDark ? "#27272a" : "#f4f4f5" }}
-          >
-            <p className="text-xl font-bold text-blue-400">{calcProt}g</p>
-            <p className={`text-xs mt-0.5 ${muted}`}>protein</p>
-          </div>
-        </div>
-
-        <button
-          onClick={() => {
-            if (numAmount <= 0) return;
-            onAdd({ name: name || "Scanned item", calories: calcCal, protein: calcProt });
-          }}
-          className="w-full py-4 bg-emerald-500 hover:bg-emerald-400 text-white font-semibold rounded-xl text-base transition-colors mb-3"
-        >
-          Add Entry
-        </button>
-        <button
-          onClick={onManual}
-          className={`w-full py-2 text-sm text-center ${muted}`}
-        >
-          Enter manually instead
-        </button>
-      </div>
-    </div>
-  );
+function FoodList({ entries, onDelete }) {
+  return <div>{entries.map((entry) => <div className="food-row" key={entry.id}>
+    <div className="food-glyph"><Flame size={19} strokeWidth={1.6} /></div>
+    <div className="grow"><div className="food-name">{entry.name}</div><small>{formatTime(entry.time)}</small></div>
+    <div className="numeric"><strong>{number(entry.calories)} <small style={{ display: "inline" }}>kcal</small></strong><small>{number(entry.protein)} g protein</small></div>
+    <button className="icon" aria-label={"Delete " + entry.name} onClick={() => onDelete(entry)}><Trash2 size={17} /></button>
+  </div>)}</div>;
 }
-*/
 
-// ============================================================
-// ADD ENTRY MODAL
-// ============================================================
+function TodayScreen({ state, onAdd, onDelete }) {
+  const totals = totalEntries(state.today.entries);
+  const remaining = state.goals.calories - totals.calories;
+  const ratio = state.goals.calories > 0 ? Math.min(totals.calories / state.goals.calories, 1) : 0;
+  return <div className="columns">
+    <section className="card hero">
+      <div className="section-head"><h2>Daily energy</h2><span className="badge"><Flame size={13} />Calories</span></div>
+      <div className="ring-area" role="img" aria-label={number(totals.calories) + " of " + number(state.goals.calories) + " calories consumed"}>
+        <svg viewBox="0 0 220 220" aria-hidden="true"><circle cx="110" cy="110" r="94" fill="none" stroke="var(--subtle)" strokeWidth="15" /><circle className="ring-progress" cx="110" cy="110" r="94" fill="none" stroke="var(--green)" strokeWidth="15" strokeLinecap="round" pathLength="100" strokeDasharray={ratio * 100 + " 100"} /></svg>
+        <div className="ring-center"><span className="eyebrow">{remaining < 0 ? "Above goal" : "Remaining"}</span><strong className="number">{number(Math.abs(remaining))}</strong><small>kcal today</small></div>
+      </div>
+      <div className="stats"><div className="stat"><small>Consumed</small><strong>{number(totals.calories)} <small>kcal</small></strong></div><div className="stat"><small>Daily goal</small><strong>{number(state.goals.calories)} <small>kcal</small></strong></div></div>
+      <p className="note">{state.today.entries.length ? "A little awareness, one meal at a time." : "A fresh day. Start with your first meal."}</p>
+    </section>
+    <div className="stack">
+      <section className="card pad"><div className="section-head"><h2>Protein</h2><Target size={19} color="var(--blue)" /></div><div className="row between"><strong className="number" style={{ fontSize: "2rem" }}>{number(totals.protein)}<small style={{ fontSize: "1rem", letterSpacing: 0 }}> g</small></strong><span className="muted">of {number(state.goals.protein)} g</span></div><div className="track"><span style={{ background: "var(--blue)", width: Math.min(100, totals.protein / Math.max(1, state.goals.protein) * 100) + "%" }} /></div><p className="note" style={{ marginTop: 12 }}>{totals.protein >= state.goals.protein ? "You've reached your protein goal." : number(state.goals.protein - totals.protein) + " g to your daily goal."}</p></section>
+      <section className="card"><div className="pad section-head" style={{ marginBottom: 0 }}><div><h2>Food log</h2><small>{state.today.entries.length} {state.today.entries.length === 1 ? "entry" : "entries"} today</small></div><button className="text-button" onClick={onAdd}><Plus size={22} aria-label="Add food" /></button></div>
+        {state.today.entries.length ? <FoodList entries={[...state.today.entries].reverse()} onDelete={onDelete} /> : <Empty title="Your day starts here" action="Log your first food" onAction={onAdd}>Add a meal or snack to see your daily picture take shape.</Empty>}
+      </section>
+    </div>
+  </div>;
+}
 
-function AddEntryModal({ state, dispatch, onClose }) {
-  const isDark = state.theme === "dark";
-  const topFoods = (state.frequentFoods || []).slice(0, 6);
-
-  const todayDate = getLocalDateString();
-  const [selectedDate, setSelectedDate] = useState(todayDate);
-  const [name, setName] = useState("");
-  const [calories, setCalories] = useState("");
-  const [protein, setProtein] = useState("");
+function AddFood({ state, dispatch, date, onClose, notify }) {
+  const [form, setForm] = useState({ name: "", calories: "", protein: "", date });
+  const [again, setAgain] = useState(false);
+  const [message, setMessage] = useState("");
   const [error, setError] = useState("");
-  const [lastAdded, setLastAdded] = useState(null);
-
-  const nameRef = useRef(null);
-  useEffect(() => {
-    // Auto-focus name field on open
-    setTimeout(() => nameRef.current?.focus(), 50);
-  }, []);
-
-  const validate = () => {
-    const cal = Number(calories);
-    const pro = Number(protein);
-    if (calories === "" || isNaN(cal) || cal < 0 || cal > 10000) {
-      return "Calories must be a number between 0 and 10,000.";
-    }
-    if (protein === "" || isNaN(pro) || pro < 0 || pro > 1000) {
-      return "Protein must be a number between 0 and 1,000g.";
-    }
-    return null;
+  const nameInput = useRef(null);
+  const change = (key, value) => { setForm((f) => ({ ...f, [key]: value })); setError(""); };
+  const submit = (e) => {
+    e.preventDefault();
+    const today = getLocalDateString();
+    if (!form.date || form.date > today) { setError("Choose today or an earlier date."); return; }
+    if (form.calories === "" || !Number.isFinite(Number(form.calories)) || Number(form.calories) < 0 || Number(form.calories) > 10000 || form.protein === "" || !Number.isFinite(Number(form.protein)) || Number(form.protein) < 0 || Number(form.protein) > 1000) { setError("Enter 0–10,000 calories and 0–1,000 g of protein."); return; }
+    const payload = { ...form, name: form.name.trim() || "Food", calories: Number(form.calories), protein: Number(form.protein) };
+    dispatch({ type: form.date === today ? "ADD_ENTRY" : "ADD_ENTRY_TO_DATE", payload });
+    const confirmation = payload.name + " added to " + (form.date === today ? "Today" : formatDate(form.date)) + ".";
+    if (again) { setMessage(confirmation); setForm((f) => ({ ...f, name: "", calories: "", protein: "" })); nameInput.current?.focus(); }
+    else { notify(confirmation); onClose(); }
   };
-
-  const handleSubmit = (e) => {
-    e?.preventDefault();
-    const err = validate();
-    if (err) { setError(err); return; }
-
-    const foodName = name.trim() || "Food";
-    if (selectedDate === todayDate) {
-      dispatch({ type: "ADD_ENTRY", payload: { name: foodName, calories: Number(calories), protein: Number(protein) } });
-    } else {
-      dispatch({ type: "ADD_ENTRY_TO_DATE", payload: { date: selectedDate, name: foodName, calories: Number(calories), protein: Number(protein) } });
-    }
-
-    setLastAdded({ name: foodName, calories, protein });
-    setName("");
-    setCalories("");
-    setProtein("");
-    setError("");
-    // Return focus to name for rapid multi-entry
-    setTimeout(() => nameRef.current?.focus(), 50);
-  };
-
-  const fillFromFrequent = (food) => {
-    setName(food.name);
-    setCalories(String(food.calories));
-    setProtein(String(food.protein));
-    setError("");
-  };
-
-  const inputClass = `w-full px-4 py-3 rounded-xl text-base outline-none transition-colors ${
-    isDark
-      ? "bg-zinc-800 text-white placeholder-zinc-500 border border-zinc-700 focus:border-emerald-500"
-      : "bg-zinc-100 text-zinc-900 placeholder-zinc-400 border border-zinc-200 focus:border-emerald-500"
-  }`;
-
-  const card = isDark ? "bg-zinc-900" : "bg-white";
-  const text = isDark ? "text-white" : "text-zinc-900";
-  const muted = isDark ? "text-zinc-400" : "text-zinc-500";
-  const labelClass = `block text-sm font-medium mb-1 ${isDark ? "text-zinc-300" : "text-zinc-700"}`;
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
-      {/* Backdrop */}
-      <div
-        className="absolute inset-0"
-        style={{ backgroundColor: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)" }}
-        onClick={onClose}
-      />
-
-      {/* Modal panel */}
-      <div
-        className={`relative w-full max-w-md rounded-t-3xl sm:rounded-3xl p-6 shadow-2xl overflow-y-auto ${card}`}
-        style={{ maxHeight: "90vh" }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="flex justify-between items-center mb-5">
-          <div className="flex items-center gap-2">
-            <h2 className={`text-xl font-bold ${text}`}>Add Food</h2>
-            {/* BARCODE SCANNER — commented out
-            {onScanOpen && (
-              <button
-                onClick={onScanOpen}
-                className="sm:hidden w-9 h-9 rounded-full flex items-center justify-center transition-colors"
-                style={{ backgroundColor: isDark ? "#27272a" : "#f4f4f5", color: isDark ? "#a1a1aa" : "#71717a" }}
-                aria-label="Scan barcode"
-              >
-                <ScanBarcode size={18} />
-              </button>
-            )}
-            */}
-          </div>
-          <button
-            onClick={onClose}
-            className="w-9 h-9 rounded-full flex items-center justify-center transition-colors"
-            style={{ backgroundColor: isDark ? "#27272a" : "#f4f4f5", color: isDark ? "#a1a1aa" : "#71717a" }}
-          >
-            <X size={18} />
-          </button>
-        </div>
-
-        {/* BARCODE SCANNER — commented out
-        {scanNotFound && (
-          <div className="mb-4 px-4 py-2.5 rounded-xl text-sm text-red-400 border"
-            style={{ backgroundColor: "rgba(239,68,68,0.08)", borderColor: "rgba(239,68,68,0.25)" }}>
-            Product not found — enter nutrition manually.
-          </div>
-        )}
-        */}
-
-        {/* Date selector */}
-        {(() => {
-          const selectableDates = [
-            { value: todayDate, label: "Today" },
-            ...(state.history || []).slice(0, 6).map((d) => {
-              const [y, mo, dy] = d.date.split("-").map(Number);
-              return {
-                value: d.date,
-                label: new Date(y, mo - 1, dy).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }),
-              };
-            }),
-          ];
-          return (
-            <div className="flex gap-2 overflow-x-auto pb-1 mb-5" style={{ scrollbarWidth: "none" }}>
-              {selectableDates.map((d) => (
-                <button
-                  key={d.value}
-                  onClick={() => setSelectedDate(d.value)}
-                  className="shrink-0 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
-                  style={{
-                    backgroundColor: selectedDate === d.value ? "#10b981" : isDark ? "#27272a" : "#f4f4f5",
-                    color: selectedDate === d.value ? "#fff" : isDark ? "#a1a1aa" : "#71717a",
-                  }}
-                >
-                  {d.label}
-                </button>
-              ))}
-            </div>
-          );
-        })()}
-
-        {/* Success feedback */}
-        {lastAdded && (
-          <div className="mb-4 px-4 py-2.5 rounded-xl text-sm text-emerald-400 border"
-            style={{ backgroundColor: "rgba(16,185,129,0.1)", borderColor: "rgba(16,185,129,0.3)" }}>
-            ✓ Added {lastAdded.name} — {lastAdded.calories} kcal, {lastAdded.protein}g protein
-          </div>
-        )}
-
-        {/* Form */}
-        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-          <div>
-            <label className={labelClass}>
-              Food Name <span className={muted}>(optional)</span>
-            </label>
-            <input
-              ref={nameRef}
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. Chicken breast"
-              className={inputClass}
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className={labelClass}>
-                Calories <span className="text-red-400">*</span>
-              </label>
-              <input
-                type="number"
-                value={calories}
-                onChange={(e) => setCalories(e.target.value)}
-                placeholder="0"
-                min="0"
-                max="10000"
-                className={inputClass}
-              />
-            </div>
-            <div>
-              <label className={labelClass}>
-                Protein (g) <span className="text-red-400">*</span>
-              </label>
-              <input
-                type="number"
-                value={protein}
-                onChange={(e) => setProtein(e.target.value)}
-                placeholder="0"
-                min="0"
-                max="1000"
-                className={inputClass}
-              />
-            </div>
-          </div>
-
-          {error && (
-            <p className="text-red-400 text-sm">{error}</p>
-          )}
-
-          <button
-            type="submit"
-            className="w-full py-4 bg-emerald-500 hover:bg-emerald-400 text-white font-semibold rounded-xl text-base transition-colors"
-          >
-            Add Entry
-          </button>
-        </form>
-
-        {/* Frequent foods quick-add */}
-        {topFoods.length > 0 && (
-          <div className="mt-6">
-            <p className={`text-xs font-semibold tracking-widest mb-3 ${muted}`}>
-              QUICK ADD — MOST FREQUENT
-            </p>
-            <div className="flex flex-col gap-2">
-              {topFoods.map((food) => (
-                <button
-                  key={food.name}
-                  onClick={() => fillFromFrequent(food)}
-                  className="flex justify-between items-center px-4 py-3 rounded-xl text-left transition-colors"
-                  style={{ backgroundColor: isDark ? "#27272a" : "#f4f4f5" }}
-                >
-                  <span className={`font-medium truncate ${text}`}>{food.name}</span>
-                  <span className={`text-sm shrink-0 ml-3 ${muted}`}>
-                    {food.calories} kcal · {food.protein}g
-                  </span>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
+  return <Sheet title="Add food" onClose={onClose}><form className="form" onSubmit={submit}>
+    {state.frequentFoods.length > 0 && <div><p className="eyebrow" style={{ marginBottom: 8 }}>Your frequent foods</p><div className="recent">{state.frequentFoods.map((f) => <button key={f.name} type="button" onClick={() => { setForm((v) => ({ ...v, name: f.name, calories: String(f.calories), protein: String(f.protein) })); setError(""); }}><span className="food-name">{f.name}</span><small>{number(f.calories)} kcal · {number(f.protein)} g protein</small></button>)}</div></div>}
+    {message && <p className="success" role="status"><Check size={18} />{message}</p>}
+    <label>Food name <input ref={nameInput} value={form.name} onChange={(e) => change("name", e.target.value)} placeholder="e.g. Greek yogurt & berries" maxLength={160} /></label>
+    <div className="fields"><label>Calories · kcal<input type="number" inputMode="decimal" min="0" max="10000" step="any" required value={form.calories} onChange={(e) => change("calories", e.target.value)} placeholder="0" /></label><label>Protein · g<input type="number" inputMode="decimal" min="0" max="1000" step="any" required value={form.protein} onChange={(e) => change("protein", e.target.value)} placeholder="0" /></label></div>
+    <label>Log date<input type="date" required max={getLocalDateString()} value={form.date} onChange={(e) => change("date", e.target.value)} onInput={(e) => change("date", e.currentTarget.value)} /></label>
+    <button type="button" className="row between text-button" role="switch" aria-checked={again} onClick={() => setAgain(!again)}><span>Add another after saving</span><span className="badge">{again ? "On" : "Off"}</span></button>
+    {error && <p className="error" role="alert">{error}</p>}
+    <button className="button primary full" type="submit"><Plus size={19} />Add food</button>
+  </form></Sheet>;
 }
 
-// ============================================================
-// HISTORY SCREEN
-// ============================================================
-
-function HistoryScreen({ state, dispatch }) {
-  const isDark = state.theme === "dark";
-  const history = state.history || [];
-  const excludedDates = new Set(state.excludedDates || []);
-  const [expandedDate, setExpandedDate] = useState(null);
-  const [pendingDelete, setPendingDelete] = useState(null);
-  const deleteTimerRef = useRef(null);
-  useEffect(() => () => clearTimeout(deleteTimerRef.current), []);
-
-  const handleDeleteEntry = (date, id) => {
-    const key = `${date}:${id}`;
-    if (pendingDelete === key) {
-      clearTimeout(deleteTimerRef.current);
-      dispatch({ type: "DELETE_ENTRY_FROM_DATE", payload: { date, id } });
-      setPendingDelete(null);
-    } else {
-      setPendingDelete(key);
-      clearTimeout(deleteTimerRef.current);
-      deleteTimerRef.current = setTimeout(() => setPendingDelete(null), 3000);
-    }
-  };
-
-  const text = isDark ? "text-white" : "text-zinc-900";
-  const muted = isDark ? "text-zinc-400" : "text-zinc-500";
-  const card = isDark ? "bg-zinc-800" : "bg-white shadow-sm";
-  const innerCard = isDark ? "bg-zinc-700" : "bg-zinc-50";
-
-  // Weekly stats — skip empty days and manually excluded days
-  const last7 = history.slice(0, 7);
-  const loggedDays = last7.filter((d) => d.entries.length > 0 && !excludedDates.has(d.date));
-  const avgCalories =
-    loggedDays.length > 0
-      ? Math.round(loggedDays.reduce((s, d) => s + d.totalCalories, 0) / loggedDays.length)
-      : 0;
-  const avgProtein =
-    loggedDays.length > 0
-      ? Math.round(loggedDays.reduce((s, d) => s + d.totalProtein, 0) / loggedDays.length)
-      : 0;
-  const daysMetGoals = loggedDays.filter(
-    (d) => d.totalCalories <= d.goalCalories && d.totalProtein >= d.goalProtein
-  ).length;
-
-  // Bar chart — last 14 days, oldest first
-  const chartData = history
-    .slice(0, 14)
-    .reverse()
-    .map((d) => ({
-      date: d.date.slice(5).replace("-", "/"),
-      calories: d.totalCalories,
-      goal: d.goalCalories,
-    }));
-
-  return (
-    <div className="flex flex-col gap-5 pb-28 pt-4">
-      <div className="text-center">
-        <h1 className={`text-2xl font-bold ${text}`}>History</h1>
-      </div>
-
-      {history.length === 0 ? (
-        <div className={`rounded-2xl p-8 text-center ${card}`}>
-          <History className="mx-auto mb-2" size={32} color={isDark ? "#52525b" : "#a1a1aa"} />
-          <p className={muted}>No history yet.</p>
-          <p className={`text-sm mt-1 ${isDark ? "text-zinc-500" : "text-zinc-400"}`}>
-            Past days will appear here after midnight.
-          </p>
-        </div>
-      ) : (
-        <>
-          {/* Weekly summary card */}
-          <div className={`rounded-2xl p-5 ${card}`}>
-            <h2 className={`text-sm font-semibold tracking-widest mb-4 ${muted}`}>
-              LAST 7 DAYS
-            </h2>
-            <div className="grid grid-cols-3 gap-3 mb-5">
-              <div className={`rounded-xl p-3 text-center ${innerCard}`}>
-                <p className="text-xl font-bold text-emerald-400">{avgCalories.toLocaleString()}</p>
-                <p className={`text-xs mt-0.5 ${muted}`}>
-                  Avg Cal{loggedDays.length < last7.length ? ` (${loggedDays.length}d)` : ""}
-                </p>
-              </div>
-              <div className={`rounded-xl p-3 text-center ${innerCard}`}>
-                <p className="text-xl font-bold text-blue-400">{avgProtein}g</p>
-                <p className={`text-xs mt-0.5 ${muted}`}>
-                  Avg Protein{loggedDays.length < last7.length ? ` (${loggedDays.length}d)` : ""}
-                </p>
-              </div>
-              <div className={`rounded-xl p-3 text-center ${innerCard}`}>
-                <p className="text-xl font-bold text-amber-400">
-                  {daysMetGoals}/{loggedDays.length}
-                </p>
-                <p className={`text-xs mt-0.5 ${muted}`}>Goals Met</p>
-              </div>
-            </div>
-
-            {/* Bar chart */}
-            {chartData.length > 0 && (
-              <div style={{ height: 140 }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={chartData} margin={{ top: 4, right: 4, left: -24, bottom: 0 }}>
-                    <XAxis
-                      dataKey="date"
-                      tick={{ fontSize: 9, fill: isDark ? "#71717a" : "#a1a1aa" }}
-                      tickLine={false}
-                      axisLine={false}
-                    />
-                    <YAxis
-                      tick={{ fontSize: 9, fill: isDark ? "#71717a" : "#a1a1aa" }}
-                      tickLine={false}
-                      axisLine={false}
-                    />
-                    <Tooltip
-                      contentStyle={{
-                        backgroundColor: isDark ? "#27272a" : "#fff",
-                        border: `1px solid ${isDark ? "#3f3f46" : "#e4e4e7"}`,
-                        borderRadius: "10px",
-                        color: isDark ? "#fff" : "#18181b",
-                        fontSize: 12,
-                      }}
-                      cursor={{ fill: isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.04)" }}
-                    />
-                    <Bar dataKey="calories" fill="#10b981" radius={[4, 4, 0, 0]} name="Calories" />
-                    {chartData[0]?.goal && (
-                      <ReferenceLine
-                        y={chartData[0].goal}
-                        stroke="#f59e0b"
-                        strokeDasharray="4 2"
-                        strokeWidth={1.5}
-                      />
-                    )}
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            )}
-          </div>
-
-          {/* Day-by-day list */}
-          <div className="flex flex-col gap-2">
-            {history.map((day) => {
-              const caloriesOver = day.totalCalories > day.goalCalories;
-              const proteinMet = day.totalProtein >= day.goalProtein;
-              const isExpanded = expandedDate === day.date;
-              const isExcluded = excludedDates.has(day.date);
-
-              return (
-                <div
-                  key={day.date}
-                  className={`rounded-2xl overflow-hidden ${card}`}
-                  style={{ opacity: isExcluded ? 0.55 : 1 }}
-                >
-                  {/* Day header row */}
-                  <div className="flex items-stretch">
-                    {/* Expand/collapse button — takes up most of the row */}
-                    <button
-                      onClick={() => setExpandedDate(isExpanded ? null : day.date)}
-                      className="flex-1 px-4 py-4 flex items-center gap-3 text-left min-w-0"
-                    >
-                      <div className="flex-1 min-w-0">
-                        <p className={`font-semibold ${text}`}>{formatDate(day.date)}</p>
-                        <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1">
-                          <span
-                            className="text-sm font-medium"
-                            style={{ color: isExcluded ? (isDark ? "#71717a" : "#a1a1aa") : caloriesOver ? "#ef4444" : "#10b981" }}
-                          >
-                            {day.totalCalories.toLocaleString()} / {day.goalCalories.toLocaleString()} kcal
-                          </span>
-                          <span
-                            className="text-sm"
-                            style={{ color: isExcluded ? (isDark ? "#71717a" : "#a1a1aa") : proteinMet ? "#60a5fa" : isDark ? "#71717a" : "#a1a1aa" }}
-                          >
-                            {day.totalProtein}g / {day.goalProtein}g protein
-                          </span>
-                        </div>
-                      </div>
-                      {isExpanded ? (
-                        <ChevronUp size={16} color={isDark ? "#71717a" : "#a1a1aa"} />
-                      ) : (
-                        <ChevronDown size={16} color={isDark ? "#71717a" : "#a1a1aa"} />
-                      )}
-                    </button>
-
-                    {/* Exclude/include toggle */}
-                    <button
-                      onClick={() => dispatch({ type: "TOGGLE_EXCLUDE_DATE", payload: day.date })}
-                      className="px-3 flex items-center justify-center shrink-0 transition-colors"
-                      style={{
-                        borderLeft: `1px solid ${isDark ? "#27272a" : "#f4f4f5"}`,
-                        color: isExcluded ? "#f59e0b" : isDark ? "#52525b" : "#d4d4d8",
-                      }}
-                      title={isExcluded ? "Include in averages" : "Exclude from averages"}
-                    >
-                      {isExcluded ? <EyeOff size={15} /> : <Eye size={15} />}
-                    </button>
-                  </div>
-
-                  {/* Expanded entries */}
-                  {isExpanded && (
-                    <div
-                      className="px-4 pb-4 flex flex-col gap-2"
-                      style={{
-                        borderTop: `1px solid ${isDark ? "#27272a" : "#f4f4f5"}`,
-                      }}
-                    >
-                      {day.entries.length === 0 ? (
-                        <p className={`text-sm py-3 ${muted}`}>No entries recorded.</p>
-                      ) : (
-                        <>
-                          <div className="flex flex-col gap-1 pt-3">
-                            {day.entries.map((entry) => {
-                              const isPending = pendingDelete === `${day.date}:${entry.id}`;
-                              return (
-                                <div
-                                  key={entry.id}
-                                  className="flex items-center gap-2 py-1"
-                                >
-                                  <div className="flex-1 min-w-0">
-                                    <span className={`text-sm font-medium ${text}`}>{entry.name}</span>
-                                    <span className={`text-xs ml-2 ${muted}`}>{formatTime(entry.time)}</span>
-                                  </div>
-                                  <div className="text-right text-sm shrink-0">
-                                    <span className="text-emerald-400">{entry.calories} kcal</span>
-                                    <span className={`ml-2 ${muted}`}>{entry.protein}g</span>
-                                  </div>
-                                  <button
-                                    onClick={() => handleDeleteEntry(day.date, entry.id)}
-                                    className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 transition-colors"
-                                    style={{
-                                      backgroundColor: isPending ? "#ef4444" : isDark ? "#27272a" : "#f4f4f5",
-                                      color: isPending ? "#fff" : isDark ? "#71717a" : "#a1a1aa",
-                                    }}
-                                    aria-label={isPending ? "Confirm delete" : "Delete entry"}
-                                  >
-                                    {isPending ? <Check size={13} /> : <Trash2 size={13} />}
-                                  </button>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </>
-      )}
-    </div>
-  );
+function HistoryScreen({ state, dispatch, onAdd, onDelete }) {
+  const [expanded, setExpanded] = useState(null);
+  const days = state.history;
+  const included = days.slice(0, 7).filter((d) => d.entries.length && !state.excludedDates.includes(d.date));
+  const average = (key) => included.length ? included.reduce((s, d) => s + d[key], 0) / included.length : 0;
+  const chart = days.slice(0, 14).reverse();
+  const max = Math.max(1, ...chart.map((d) => d.totalCalories));
+  return <div className="columns"><section className="card pad"><div className="section-head"><h2>Your recent rhythm</h2><History size={20} color="var(--green)" /></div>
+    <div className="stats"><div className="stat"><small>Average calories</small><strong>{included.length ? number(Math.round(average("totalCalories"))) : "—"}</strong><small>kcal / logged day</small></div><div className="stat"><small>Average protein</small><strong>{included.length ? number(Math.round(average("totalProtein"))) : "—"}</strong><small>g / logged day</small></div></div>
+    {chart.length > 0 && <div className="bars" role="img" aria-label="Calories for the last 14 archived days. Exact values are listed in the day cards.">{chart.map((d) => <div className="bar" key={d.date} title={formatDate(d.date) + ": " + d.totalCalories + " kcal"}><span style={{ height: Math.max(3, d.totalCalories / max * 100) + "px", opacity: state.excludedDates.includes(d.date) ? .3 : 1 }} /><small>{d.date.slice(8)}</small></div>)}</div>}
+    <p className="note" style={{ marginTop: 18 }}>Averages use {included.length} included, nonempty {included.length === 1 ? "day" : "days"} from your last 7 archived days. Excluding a day keeps its food log.</p>
+    <p className="note" style={{ marginTop: 10 }}>{included.filter((d) => d.totalCalories <= d.goalCalories && d.totalProtein >= d.goalProtein).length} of {included.length} included days met both goals.</p>
+  </section><div className="stack">{days.length === 0 ? <section className="card"><Empty icon={History} title="A story in the making" action="Add a past meal" onAction={() => onAdd(getLocalDateString())}>Your days move here after midnight. You can also fill in a previous day.</Empty></section> : days.map((day) => {
+    const open = expanded === day.date, excluded = state.excludedDates.includes(day.date);
+    return <section className="card" key={day.date}><button className="history-heading" aria-expanded={open} onClick={() => setExpanded(open ? null : day.date)}><div className="grow"><h3>{formatDate(day.date)}</h3><small>{number(day.totalCalories)} kcal · {number(day.totalProtein)} g protein</small>{excluded && <span className="badge"><EyeOff size={12} />Excluded from averages</span>}</div>{open ? <ChevronUp size={19} /> : <ChevronDown size={19} />}</button>
+      {open && <div className="history-details"><div className="history-actions"><small>Goals: {number(day.goalCalories)} kcal · {number(day.goalProtein)} g</small><button className="icon" aria-label={excluded ? "Include day in averages" : "Exclude day from averages"} aria-pressed={excluded} onClick={() => dispatch({ type: "TOGGLE_EXCLUDE_DATE", payload: day.date })}>{excluded ? <EyeOff size={18} /> : <Eye size={18} />}</button></div>
+      {day.entries.length ? <FoodList entries={day.entries} onDelete={(entry) => onDelete(entry, day.date)} /> : <p className="note pad">No food recorded for this day.</p>}<div className="history-actions"><button className="text-button row" onClick={() => onAdd(day.date)}><Plus size={18} />Add food to this day</button></div></div>}
+    </section>;
+  })}</div></div>;
 }
 
-// ============================================================
-// WEIGHT SCREEN
-// ============================================================
+const convertWeight = (entry, unit) => entry.unit === unit ? entry.weight : unit === "kg" ? entry.weight / 2.2046226218 : entry.weight * 2.2046226218;
 
-function WeightScreen({ state, dispatch }) {
-  const isDark = state.theme === "dark";
-  const weightLog = state.weightLog || [];
-  const weightUnit = state.weightUnit || "lbs";
-
-  const [inputWeight, setInputWeight] = useState("");
-  const [error, setError] = useState("");
-  const [pendingDelete, setPendingDelete] = useState(null);
-  const deleteTimerRef = useRef(null);
-
-  useEffect(() => () => clearTimeout(deleteTimerRef.current), []);
-
-  const handleDeleteClick = (id) => {
-    if (pendingDelete === id) {
-      clearTimeout(deleteTimerRef.current);
-      dispatch({ type: "DELETE_WEIGHT", payload: id });
-      setPendingDelete(null);
-    } else {
-      setPendingDelete(id);
-      clearTimeout(deleteTimerRef.current);
-      deleteTimerRef.current = setTimeout(() => setPendingDelete(null), 3000);
-    }
-  };
-
-  const handleLogWeight = () => {
-    const w = parseFloat(inputWeight);
-    if (inputWeight === "" || isNaN(w)) {
-      setError("Please enter a valid weight.");
-      return;
-    }
-    if (w <= 0) {
-      setError("Weight must be greater than 0.");
-      return;
-    }
-    if (w > 1500) {
-      setError("Weight seems too high. Please double-check.");
-      return;
-    }
-    setError("");
-    dispatch({ type: "LOG_WEIGHT", payload: { weight: w, unit: weightUnit } });
-    setInputWeight("");
-  };
-
-  // Last 14 entries oldest-first for the chart
-  const chartData = [...weightLog]
-    .slice(0, 14)
-    .reverse()
-    .map((e) => ({
-      date: e.date.slice(5).replace("-", "/"),
-      weight: e.weight,
-    }));
-
-  const latestEntry = weightLog[0];
-
-  const card = isDark ? "bg-zinc-800" : "bg-white shadow-sm";
-  const text = isDark ? "text-white" : "text-zinc-900";
-  const muted = isDark ? "text-zinc-400" : "text-zinc-500";
-  const inputClass = `flex-1 min-w-0 w-0 text-center text-xl font-bold py-2.5 px-2 rounded-xl outline-none transition-colors ${
-    isDark
-      ? "bg-zinc-700 text-white border border-zinc-600 focus:border-emerald-500"
-      : "bg-zinc-50 text-zinc-900 border border-zinc-200 focus:border-emerald-500"
-  }`;
-
-  return (
-    <div className="flex flex-col gap-5 pb-28 pt-4">
-      <div className="text-center">
-        <h1 className={`text-2xl font-bold ${text}`}>Weight</h1>
-      </div>
-
-      {/* Log weight card */}
-      <div className={`rounded-2xl p-5 ${card}`}>
-        <h2 className={`text-sm font-semibold tracking-widest mb-4 ${muted}`}>LOG TODAY'S WEIGHT</h2>
-
-        {/* Unit toggle */}
-        <div className="flex gap-2 mb-4">
-          {["lbs", "kg"].map((unit) => (
-            <button
-              key={unit}
-              onClick={() => dispatch({ type: "SET_WEIGHT_UNIT", payload: unit })}
-              className={`px-4 py-2 rounded-xl text-sm font-semibold transition-colors ${
-                weightUnit === unit
-                  ? "bg-emerald-500 text-white"
-                  : isDark
-                  ? "bg-zinc-700 text-zinc-300 hover:bg-zinc-600"
-                  : "bg-zinc-100 text-zinc-700 hover:bg-zinc-200"
-              }`}
-            >
-              {unit}
-            </button>
-          ))}
-        </div>
-
-        <div className="flex items-center gap-3 mb-2">
-          <input
-            type="number"
-            value={inputWeight}
-            onChange={(e) => { setInputWeight(e.target.value); setError(""); }}
-            placeholder={weightUnit === "lbs" ? "e.g. 175" : "e.g. 79.5"}
-            className={inputClass}
-            onKeyDown={(e) => e.key === "Enter" && handleLogWeight()}
-          />
-          <span className={`text-base font-medium shrink-0 ${muted}`}>{weightUnit}</span>
-        </div>
-
-        {error && <p className="text-red-400 text-sm mb-3">{error}</p>}
-
-        <button
-          onClick={handleLogWeight}
-          className="w-full py-3 bg-emerald-500 hover:bg-emerald-400 text-white font-semibold rounded-xl transition-colors mt-2"
-        >
-          Log Weight
-        </button>
-
-        {latestEntry && (
-          <p className={`text-xs text-center mt-3 ${muted}`}>
-            Latest:{" "}
-            <span className={`font-semibold ${text}`}>
-              {latestEntry.weight} {latestEntry.unit}
-            </span>{" "}
-            on {formatDate(latestEntry.date)}
-          </p>
-        )}
-      </div>
-
-      {/* Trend chart — only show when there are 2+ entries */}
-      {chartData.length >= 2 && (
-        <div className={`rounded-2xl p-5 ${card}`}>
-          <h2 className={`text-sm font-semibold tracking-widest mb-4 ${muted}`}>TREND</h2>
-          <div style={{ height: 140 }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={chartData} margin={{ top: 4, right: 4, left: -24, bottom: 0 }}>
-                <XAxis
-                  dataKey="date"
-                  tick={{ fontSize: 9, fill: isDark ? "#71717a" : "#a1a1aa" }}
-                  tickLine={false}
-                  axisLine={false}
-                />
-                <YAxis
-                  tick={{ fontSize: 9, fill: isDark ? "#71717a" : "#a1a1aa" }}
-                  tickLine={false}
-                  axisLine={false}
-                  domain={["auto", "auto"]}
-                />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: isDark ? "#27272a" : "#fff",
-                    border: `1px solid ${isDark ? "#3f3f46" : "#e4e4e7"}`,
-                    borderRadius: "10px",
-                    color: isDark ? "#fff" : "#18181b",
-                    fontSize: 12,
-                  }}
-                  cursor={{ stroke: isDark ? "#3f3f46" : "#e4e4e7" }}
-                  formatter={(val) => [`${val} ${weightUnit}`, "Weight"]}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="weight"
-                  stroke="#10b981"
-                  strokeWidth={2}
-                  dot={{ fill: "#10b981", r: 3 }}
-                  activeDot={{ r: 5 }}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-      )}
-
-      {/* Log history */}
-      {weightLog.length > 0 ? (
-        <div>
-          <div className="flex justify-between items-center mb-3">
-            <h2 className={`text-base font-semibold ${text}`}>Log ({weightLog.length})</h2>
-            <span className={`text-xs ${muted}`}>Tap delete twice to confirm</span>
-          </div>
-          <div className="flex flex-col gap-2">
-            {weightLog.map((entry) => {
-              const isPending = pendingDelete === entry.id;
-              return (
-                <div
-                  key={entry.id}
-                  className={`rounded-xl px-4 py-3 flex items-center gap-3 ${card}`}
-                >
-                  <div className="flex-1 min-w-0">
-                    <p className={`font-medium ${text}`}>{formatDate(entry.date)}</p>
-                    <p className={`text-xs ${muted}`}>{formatTime(entry.time)}</p>
-                  </div>
-                  <p className="text-emerald-400 font-semibold shrink-0">
-                    {entry.weight} {entry.unit}
-                  </p>
-                  <button
-                    onClick={() => handleDeleteClick(entry.id)}
-                    className="w-11 h-11 rounded-lg flex items-center justify-center shrink-0 transition-colors"
-                    style={{
-                      backgroundColor: isPending ? "#ef4444" : isDark ? "#27272a" : "#f4f4f5",
-                      color: isPending ? "#fff" : isDark ? "#71717a" : "#a1a1aa",
-                    }}
-                    aria-label={isPending ? "Confirm delete" : "Delete entry"}
-                  >
-                    {isPending ? <Check size={16} /> : <Trash2 size={16} />}
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      ) : (
-        <div className={`rounded-2xl p-8 text-center ${card}`}>
-          <Scale className="mx-auto mb-2" size={32} color={isDark ? "#52525b" : "#a1a1aa"} />
-          <p className={muted}>No weight entries yet.</p>
-          <p className={`text-sm mt-1 ${isDark ? "text-zinc-500" : "text-zinc-400"}`}>
-            Log your weight above to start tracking.
-          </p>
-        </div>
-      )}
-    </div>
-  );
+function WeightScreen({ state, dispatch, notify, onDelete }) {
+  const [value, setValue] = useState("");
+  const [range, setRange] = useState(30);
+  const unit = state.weightUnit;
+  const latest = state.weightLog[0];
+  const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - range + 1); cutoff.setHours(0, 0, 0, 0);
+  const points = [...state.weightLog].reverse().filter((e) => new Date(e.date + "T12:00:00") >= cutoff);
+  const values = points.map((e) => convertWeight(e, unit));
+  const low = Math.min(...values) - 1, high = Math.max(...values) + 1;
+  const timestamps = points.map((e) => new Date(e.date + "T12:00:00").getTime());
+  const coords = values.map((v, i) => [points.length === 1 ? 220 : 30 + (timestamps[i] - timestamps[0]) / Math.max(1, timestamps[timestamps.length - 1] - timestamps[0]) * 380, 160 - (v - low) / (high - low) * 125]);
+  const log = (e) => { e.preventDefault(); if (!Number.isFinite(Number(value)) || Number(value) <= 0 || Number(value) > 1500) return; dispatch({ type: "LOG_WEIGHT", payload: { weight: Number(value), unit } }); setValue(""); notify("Weight saved for today."); };
+  return <div className="columns"><section className="card pad"><div className="section-head"><h2>Weight trend</h2><Scale size={20} color="var(--green)" /></div><strong className="number">{latest ? number(convertWeight(latest, unit)) : "—"} <small style={{ fontSize: "1rem" }}>{unit}</small></strong><p className="note">{latest ? "Latest · " + formatDate(latest.date) : "Your measurements, at your pace."}</p>
+    <div className="segments" style={{ marginTop: 22 }}>{[30, 90, 365].map((r) => <button key={r} aria-pressed={range === r} onClick={() => setRange(r)}>{r === 365 ? "1 year" : r + " days"}</button>)}</div>
+    {points.length ? <><div className="chart"><svg viewBox="0 0 440 200" role="img" aria-label={"Weight in " + unit + " over " + points.length + " measurements; values listed below."}>{[40, 100, 160].map((y) => <line key={y} x1="30" x2="410" y1={y} y2={y} stroke="var(--line)" strokeDasharray="3 5" />)}<text x="30" y="20" fontSize="11" fill="var(--muted)">{number(high)} {unit}</text><text x="30" y="188" fontSize="11" fill="var(--muted)">{number(low)} {unit}</text><polyline points={coords.map((p) => p.join(",")).join(" ")} fill="none" stroke="var(--green)" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" />{coords.map(([x, y], i) => <circle key={points[i].id} cx={x} cy={y} r="4" fill="var(--surface)" stroke="var(--green)" strokeWidth="2"><title>{formatDate(points[i].date)}: {number(values[i])} {unit}</title></circle>)}</svg></div><div className="row between note"><span>{formatDate(points[0].date)}</span><span>{points.length > 1 ? formatDate(points[points.length - 1].date) : "First measurement"}</span></div></> : <Empty icon={Scale} title="Room to grow">Log a measurement to start your trend. No measurements in this date range yet.</Empty>}
+  </section><div className="stack"><section className="card pad"><h2 style={{ marginBottom: 18 }}>Log today's weight</h2><form className="form" onSubmit={log}><div className="fields"><label>Weight<input type="number" required step="any" min=".01" max="1500" inputMode="decimal" placeholder={unit === "kg" ? "70.0" : "154.0"} value={value} onChange={(e) => setValue(e.target.value)} /></label><label>Unit<select value={unit} onChange={(e) => { dispatch({ type: "SET_WEIGHT_UNIT", payload: e.target.value }); if (value && Number.isFinite(Number(value))) setValue(String(Math.round(convertWeight({ weight: Number(value), unit }, e.target.value) * 10) / 10)); }}><option value="lbs">Pounds · lbs</option><option value="kg">Kilograms · kg</option></select></label></div><p className="note">One measurement per day. Saving again updates today's measurement.</p><button className="button primary"><Plus size={18} />Save weight</button></form></section>
+  <section className="card"><div className="pad"><h2>Measurements</h2><small>Displayed in {unit}; original units are preserved.</small></div>{state.weightLog.length ? state.weightLog.map((entry) => <div className="food-row" key={entry.id}><div className="grow"><h3>{formatDate(entry.date)}</h3><small>{formatTime(entry.time)}</small></div><strong>{number(convertWeight(entry, unit))} <small>{unit}</small></strong><button className="icon" aria-label={"Delete weight for " + formatDate(entry.date)} onClick={() => onDelete(entry)}><Trash2 size={17} /></button></div>) : <p className="note pad">Your saved measurements will appear here.</p>}</section></div></div>;
 }
 
-// ============================================================
-// SETTINGS SCREEN
-// ============================================================
-
-function SettingsScreen({ state, dispatch }) {
-  const isDark = state.theme === "dark";
-  const { goals } = state;
-  const [showResetConfirm, setShowResetConfirm] = useState(false);
-  const [calGoalError, setCalGoalError] = useState("");
-
-  const text = isDark ? "text-white" : "text-zinc-900";
-  const muted = isDark ? "text-zinc-400" : "text-zinc-500";
-  const card = isDark ? "bg-zinc-800" : "bg-white shadow-sm";
-
-  const updateCalorieGoal = (v) => {
-    const num = Number(v);
-    if (isNaN(num) || num < 0) {
-      setCalGoalError("Calorie goal cannot be negative.");
-      return;
-    }
-    setCalGoalError("");
-    dispatch({ type: "UPDATE_GOALS", payload: { calories: Math.min(10000, num) } });
-  };
-  const clampProtein = (v) =>
-    dispatch({ type: "UPDATE_GOALS", payload: { protein: Math.max(10, Math.min(1000, v)) } });
-
-  const calPresets = [1500, 1800, 2000, 2200, 2500, 3000];
-  const proPresets = [100, 120, 150, 175, 200];
-
-  const stepperBtn = `w-11 h-11 rounded-xl flex items-center justify-center text-xl font-bold transition-colors shrink-0 ${
-    isDark ? "bg-zinc-700 hover:bg-zinc-600 text-white" : "bg-zinc-100 hover:bg-zinc-200 text-zinc-900"
-  }`;
-  const numInput = `flex-1 min-w-0 w-0 text-center text-xl font-bold py-2.5 rounded-xl outline-none transition-colors ${
-    isDark ? "bg-zinc-700 text-white border border-zinc-600" : "bg-zinc-50 text-zinc-900 border border-zinc-200"
-  }`;
-  const presetBtn = (active) =>
-    `px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-      active
-        ? "bg-emerald-500 text-white"
-        : isDark
-        ? "bg-zinc-700 text-zinc-300 hover:bg-zinc-600"
-        : "bg-zinc-100 text-zinc-700 hover:bg-zinc-200"
-    }`;
-
-  return (
-    <div className="flex flex-col gap-5 pb-28 pt-4">
-      <div className="text-center">
-        <h1 className={`text-2xl font-bold ${text}`}>Settings</h1>
-      </div>
-
-      {/* Appearance */}
-      <div className={`rounded-2xl p-5 ${card}`}>
-        <h2 className={`text-sm font-semibold tracking-widest mb-4 ${muted}`}>APPEARANCE</h2>
-        <div className="flex justify-between items-center">
-          <span className={text}>Theme</span>
-          <button
-            onClick={() =>
-              dispatch({ type: "SET_THEME", payload: isDark ? "light" : "dark" })
-            }
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-medium transition-colors ${
-              isDark
-                ? "bg-zinc-700 text-white hover:bg-zinc-600"
-                : "bg-zinc-100 text-zinc-900 hover:bg-zinc-200"
-            }`}
-          >
-            {isDark ? <Sun size={16} /> : <Moon size={16} />}
-            {isDark ? "Light Mode" : "Dark Mode"}
-          </button>
-        </div>
-      </div>
-
-      {/* Calorie goal */}
-      <div className={`rounded-2xl p-5 ${card}`}>
-        <h2 className={`text-sm font-semibold tracking-widest mb-4 ${muted}`}>DAILY CALORIE GOAL</h2>
-        <div className="flex items-center gap-3 mb-2">
-          <button className={stepperBtn} onClick={() => updateCalorieGoal(Math.max(0, goals.calories - 50))}>−</button>
-          <input
-            type="number"
-            value={goals.calories}
-            onChange={(e) => updateCalorieGoal(e.target.value)}
-            className={numInput}
-          />
-          <button className={stepperBtn} onClick={() => updateCalorieGoal(goals.calories + 50)}>+</button>
-        </div>
-        {calGoalError && <p className="text-red-400 text-sm mb-3">{calGoalError}</p>}
-        <div className="flex flex-wrap gap-2 mt-2">
-          {calPresets.map((p) => (
-            <button key={p} onClick={() => updateCalorieGoal(p)} className={presetBtn(goals.calories === p)}>
-              {p.toLocaleString()}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Protein goal */}
-      <div className={`rounded-2xl p-5 ${card}`}>
-        <h2 className={`text-sm font-semibold tracking-widest mb-4 ${muted}`}>DAILY PROTEIN GOAL</h2>
-        <div className="flex items-center gap-3 mb-4">
-          <button className={stepperBtn} onClick={() => clampProtein(goals.protein - 5)}>−</button>
-          <input
-            type="number"
-            value={goals.protein}
-            onChange={(e) => clampProtein(Number(e.target.value))}
-            className={numInput}
-          />
-          <button className={stepperBtn} onClick={() => clampProtein(goals.protein + 5)}>+</button>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {proPresets.map((p) => (
-            <button key={p} onClick={() => clampProtein(p)} className={presetBtn(goals.protein === p)}>
-              {p}g
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <p className={`text-xs text-center ${muted}`}>
-        Goals apply to today and all future days. History keeps the goal at time of logging.
-      </p>
-
-      {/* Danger zone */}
-      <div
-        className={`rounded-2xl p-5 ${card}`}
-        style={{ border: `1px solid ${isDark ? "rgba(239,68,68,0.25)" : "rgba(239,68,68,0.15)"}` }}
-      >
-        <h2 className="text-sm font-semibold tracking-widest mb-4 text-red-400">DANGER ZONE</h2>
-        {!showResetConfirm ? (
-          <button
-            onClick={() => setShowResetConfirm(true)}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-red-400 font-medium transition-colors"
-            style={{ border: "1px solid rgba(239,68,68,0.4)" }}
-          >
-            <RotateCcw size={15} />
-            Reset All Data
-          </button>
-        ) : (
-          <div className="flex flex-col gap-3">
-            <p className={`text-sm ${isDark ? "text-zinc-300" : "text-zinc-600"}`}>
-              This will permanently delete all entries, history, frequent foods, and weight log. Goals will reset
-              to defaults. Are you sure?
-            </p>
-            <div className="flex gap-3">
-              <button
-                onClick={() => {
-                  dispatch({ type: "RESET_ALL" });
-                  setShowResetConfirm(false);
-                }}
-                className="flex-1 py-2.5 bg-red-500 hover:bg-red-400 text-white rounded-xl font-semibold transition-colors"
-              >
-                Yes, Reset
-              </button>
-              <button
-                onClick={() => setShowResetConfirm(false)}
-                className={`flex-1 py-2.5 rounded-xl font-semibold transition-colors ${
-                  isDark ? "bg-zinc-700 text-white hover:bg-zinc-600" : "bg-zinc-100 text-zinc-900 hover:bg-zinc-200"
-                }`}
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
+function SettingsScreen({ state, dispatch, onReset, notify }) {
+  const [goals, setGoals] = useState({ calories: String(state.goals.calories), protein: String(state.goals.protein) });
+  const presets = { calories: [1500, 1800, 2000, 2200, 2500, 3000], protein: [100, 120, 150, 175, 200] };
+  const save = (e) => { e.preventDefault(); dispatch({ type: "UPDATE_GOALS", payload: { calories: Number(goals.calories), protein: Number(goals.protein) } }); notify("Daily goals updated."); };
+  return <div className="columns"><section className="card pad"><div className="section-head"><h2>Daily goals</h2><Target size={20} color="var(--green)" /></div><p className="note" style={{ marginBottom: 22 }}>Make these yours. Updated goals apply to today and future logs.</p><form className="form" onSubmit={save}>{["calories", "protein"].map((key) => <div className="form" key={key} style={{ gap: 10 }}><label>{key === "calories" ? "Energy · kcal" : "Protein · g"}<input required type="number" step="any" min={key === "calories" ? 0 : 10} max={key === "calories" ? 10000 : 1000} value={goals[key]} onChange={(e) => setGoals((g) => ({ ...g, [key]: e.target.value }))} /></label><div className="presets">{presets[key].map((v) => <button key={v} type="button" aria-pressed={Number(goals[key]) === v} onClick={() => setGoals((g) => ({ ...g, [key]: String(v) }))}>{number(v)}</button>)}</div></div>)}<button className="button primary" type="submit"><Check size={18} />Save goals</button></form></section>
+    <div className="stack"><section className="card pad"><h2 style={{ marginBottom: 18 }}>Appearance</h2><div className="segments">{[["light", Sun], ["dark", Moon]].map(([theme, Icon]) => <button key={theme} className="row" aria-pressed={state.theme === theme} onClick={() => dispatch({ type: "SET_THEME", payload: theme })}><Icon size={18} />{theme === "light" ? "Light" : "Dark"}</button>)}</div></section>
+    <section className="card pad"><div className="section-head"><h2>On this device</h2><Check size={20} color="var(--green)" /></div><p className="note">Your food logs, goals, and weight measurements are saved in this browser. Clearing browser data removes them. History retains up to 90 days during daily rollover.</p></section>
+    <section className="card pad"><h2>Start fresh</h2><p className="note" style={{ margin: "10px 0 18px" }}>Erase all logs, frequent foods, and preferences, and restore the default goals.</p><button className="button danger full" onClick={onReset}><RotateCcw size={17} />Reset all data</button></section></div></div>;
 }
-
-// ============================================================
-// BOTTOM NAVIGATION BAR
-// ============================================================
-
-function NavBar({ activeTab, onTabChange, isDark, onAddEntry }) {
-  const navBg = isDark ? "#18181b" : "#ffffff";
-  const navBorder = isDark ? "#27272a" : "#e4e4e7";
-
-  const leftTabs = [
-    { id: "today", label: "Today", icon: Flame },
-    { id: "weight", label: "Weight", icon: Scale },
-  ];
-  const rightTabs = [
-    { id: "history", label: "History", icon: History },
-    { id: "settings", label: "Settings", icon: Settings },
-  ];
-
-  return (
-    <nav
-      className="fixed bottom-0 left-1/2 w-full max-w-lg z-30"
-      style={{
-        transform: "translateX(-50%)",
-        backgroundColor: navBg,
-        borderTop: `1px solid ${navBorder}`,
-      }}
-    >
-      <div className="flex items-end">
-        {/* Today + Weight tabs */}
-        {leftTabs.map((tab) => {
-          const Icon = tab.icon;
-          const isActive = activeTab === tab.id;
-          return (
-            <button
-              key={tab.id}
-              onClick={() => onTabChange(tab.id)}
-              className="flex-1 flex flex-col items-center justify-center py-3 gap-0.5 transition-colors"
-              style={{ color: isActive ? "#10b981" : isDark ? "#71717a" : "#a1a1aa" }}
-            >
-              <Icon size={22} />
-              <span className="text-xs font-medium">{tab.label}</span>
-            </button>
-          );
-        })}
-
-        {/* Center Add button (raised) */}
-        <div className="flex-1 flex flex-col items-center pb-2">
-          <button
-            onClick={onAddEntry}
-            className="flex flex-col items-center gap-0.5 transition-opacity hover:opacity-80"
-            style={{ marginTop: "-20px" }}
-            aria-label="Add food entry"
-          >
-            <div
-              className="w-14 h-14 rounded-full flex items-center justify-center shadow-lg"
-              style={{
-                backgroundColor: "#10b981",
-                boxShadow: "0 4px 20px rgba(16,185,129,0.5)",
-              }}
-            >
-              <Plus size={26} color="#fff" />
-            </div>
-            <span className="text-xs font-medium" style={{ color: "#10b981" }}>
-              Add
-            </span>
-          </button>
-        </div>
-
-        {/* History + Settings tabs */}
-        {rightTabs.map((tab) => {
-          const Icon = tab.icon;
-          const isActive = activeTab === tab.id;
-          return (
-            <button
-              key={tab.id}
-              onClick={() => onTabChange(tab.id)}
-              className="flex-1 flex flex-col items-center justify-center py-3 gap-0.5 transition-colors"
-              style={{ color: isActive ? "#10b981" : isDark ? "#71717a" : "#a1a1aa" }}
-            >
-              <Icon size={22} />
-              <span className="text-xs font-medium">{tab.label}</span>
-            </button>
-          );
-        })}
-      </div>
-    </nav>
-  );
-}
-
-// ============================================================
-// ROOT APP
-// ============================================================
 
 export default function MacroTracker() {
-  // ---- State init: load from localStorage, apply daily reset if needed ----
   const [state, dispatch] = useReducer(reducer, null, () => {
-    const currentDate = getLocalDateString();
-    const saved = loadState();
-
-    if (!saved) {
-      // First visit — create fresh state
-      return { ...DEFAULT_STATE, today: { date: currentDate, entries: [] } };
-    }
-
-    // If the saved date differs from today, archive and reset
-    if (saved.today?.date && saved.today.date !== currentDate) {
-      return performDailyReset({ ...DEFAULT_STATE, ...saved }, currentDate);
-    }
-
-    // Merge with defaults in case new keys were added in an update
+    const currentDate = getLocalDateString(), saved = loadState();
+    if (!saved) return { ...DEFAULT_STATE, today: { date: currentDate, entries: [] } };
+    if (saved.today?.date && saved.today.date !== currentDate) return performDailyReset({ ...DEFAULT_STATE, ...saved }, currentDate);
     return { ...DEFAULT_STATE, ...saved };
   });
-
-  const [activeTab, setActiveTab] = useState("today");
-  const [showAddModal, setShowAddModal] = useState(false);
-  /* BARCODE SCANNER — commented out
-  const [showScanner, setShowScanner] = useState(false);
-  const [scanProduct, setScanProduct] = useState(null);
-  const [scanNotFound, setScanNotFound] = useState(false);
-  const [scanLoading, setScanLoading] = useState(false);
-  */
-
-  const isDark = state.theme === "dark";
-
-  // ---- Sync state to localStorage on every change ----
+  const [tab, setTab] = useState("today");
+  const [sheet, setSheet] = useState(null);
+  const [toast, setToast] = useState("");
+  const [storageError, setStorageError] = useState(false);
+  const timer = useRef(null);
+  const notify = (message) => { clearTimeout(timer.current); setToast(message); timer.current = setTimeout(() => setToast(""), 4000); };
+  useEffect(() => () => clearTimeout(timer.current), []);
   useEffect(() => {
     saveState(state);
+    try { setStorageError(localStorage.getItem(STORAGE_KEY) !== JSON.stringify(state)); } catch { setStorageError(true); }
   }, [state]);
-
-  // ---- Apply theme class to <html> for CSS dark mode selectors ----
   useEffect(() => {
-    if (isDark) {
-      document.documentElement.classList.add("dark");
-      document.body.style.backgroundColor = "#09090b";
-    } else {
-      document.documentElement.classList.remove("dark");
-      document.body.style.backgroundColor = "#f4f4f5";
-    }
-  }, [isDark]);
-
-  // ---- Periodic midnight-crossing check every 30 seconds ----
+    document.documentElement.classList.toggle("dark", state.theme === "dark");
+    document.body.style.backgroundColor = state.theme === "dark" ? "#111416" : "#f3f4f6";
+  }, [state.theme]);
   useEffect(() => {
-    const interval = setInterval(() => {
-      const currentDate = getLocalDateString();
-      if (state.today?.date !== currentDate) {
-        dispatch({ type: "DAILY_RESET", payload: currentDate });
-      }
-    }, DATE_CHECK_INTERVAL_MS);
-
-    return () => clearInterval(interval);
-  }, [state.today?.date]);
-
-  const handleAddEntry = () => {
-    setShowAddModal(true);
-    setActiveTab("today");
-  };
-
-  /* BARCODE SCANNER — commented out
-  const handleScanOpen = () => {
-    setShowAddModal(true);
-    setActiveTab("today");
-    setShowScanner(true);
-  };
-
-  const handleBarcodeDetected = async (barcode) => {
-    setShowScanner(false);
-    setScanLoading(true);
-    try {
-      const product = await fetchProductByBarcode(barcode);
-      if (product) {
-        setScanProduct(product);
-      } else {
-        setScanNotFound(true);
-        setTimeout(() => setScanNotFound(false), 3000);
-      }
-    } catch {
-      setScanNotFound(true);
-      setTimeout(() => setScanNotFound(false), 3000);
-    } finally {
-      setScanLoading(false);
-    }
-  };
-  */
-
-  const bgColor = isDark ? "#09090b" : "#f4f4f5";
-
-  return (
-    <>
-      {/* Minimal keyframe for entry fade-in — injected via style tag */}
-      <style>{`
-        @keyframes fadeIn {
-          from { opacity: 0; transform: translateY(6px); }
-          to   { opacity: 1; transform: translateY(0); }
-        }
-      `}</style>
-
-      <div
-        className="min-h-screen"
-        style={{ backgroundColor: bgColor, color: isDark ? "#fafafa" : "#18181b" }}
-      >
-        {/* Centered phone-width container */}
-        <div className="mx-auto max-w-lg min-h-screen relative flex flex-col">
-          <div className="flex-1 overflow-y-auto px-4">
-            {activeTab === "today" && (
-              <TodayScreen state={state} dispatch={dispatch} onAddEntry={handleAddEntry} />
-            )}
-            {activeTab === "weight" && <WeightScreen state={state} dispatch={dispatch} />}
-            {activeTab === "history" && <HistoryScreen state={state} dispatch={dispatch} />}
-            {activeTab === "settings" && <SettingsScreen state={state} dispatch={dispatch} />}
-          </div>
-
-          <NavBar
-            activeTab={activeTab}
-            onTabChange={setActiveTab}
-            isDark={isDark}
-            onAddEntry={handleAddEntry}
-          />
-        </div>
+    const check = () => { const date = getLocalDateString(); if (state.today.date !== date) dispatch({ type: "DAILY_RESET", payload: date }); };
+    const interval = setInterval(check, DATE_CHECK_INTERVAL_MS);
+    window.addEventListener("focus", check);
+    return () => { clearInterval(interval); window.removeEventListener("focus", check); };
+  }, [state.today.date]);
+  const add = (date = getLocalDateString()) => setSheet({ kind: "food", date });
+  const removeFood = (entry, date) => setSheet({ kind: "delete", title: "Delete food?", description: entry.name + " will be removed from " + (date ? formatDate(date) : "today's log") + ".", action: date ? { type: "DELETE_ENTRY_FROM_DATE", payload: { date, id: entry.id } } : { type: "DELETE_ENTRY", payload: entry.id } });
+  const tabs = [["today", Flame, "Today"], ["history", History, "History"], ["weight", Scale, "Weight"], ["settings", Settings, "Settings"]];
+  const title = tabs.find(([key]) => key === tab)[2];
+  return <div className="mt" data-theme={state.theme}>
+    <style>{UI_CSS}</style>
+    <div inert={sheet ? "" : undefined}>
+      <div className="shell"><div className="brand"><Flame size={20} />macro<span style={{ fontWeight: 400, color: "var(--muted)", marginLeft: -5 }}>tracker</span><small>A little more in tune.</small></div>
+        <header className="header"><div><p className="eyebrow">{tab === "today" ? formatDate(state.today.date) : "Your health, day by day"}</p><h1>{title === "Today" ? "Your daily picture." : title}</h1><p className="muted">{tab === "today" ? "Small steps. A clearer view." : tab === "history" ? "Look back. Find your rhythm." : tab === "weight" ? "See the trend over time." : "A routine that feels like you."}</p></div>
+          {(tab === "today" || tab === "history") && <button className="button primary" onClick={() => add()}><Plus size={20} /><span>Add food</span></button>}
+        </header>
+        {storageError && <p className="error card pad" role="alert" style={{ marginBottom: 20 }}>Changes could not be saved in this browser. Keep this page open and free up browser storage before leaving.</p>}
+        <main id="main-content">
+          {tab === "today" && <TodayScreen state={state} onAdd={() => add()} onDelete={(entry) => removeFood(entry)} />}
+          {tab === "history" && <HistoryScreen state={state} dispatch={dispatch} onAdd={add} onDelete={removeFood} />}
+          {tab === "weight" && <WeightScreen state={state} dispatch={dispatch} notify={notify} onDelete={(entry) => setSheet({ kind: "delete", title: "Delete measurement?", description: "Remove the weight recorded for " + formatDate(entry.date) + ".", action: { type: "DELETE_WEIGHT", payload: entry.id } })} />}
+          {tab === "settings" && <SettingsScreen state={state} dispatch={dispatch} notify={notify} onReset={() => setSheet({ kind: "reset" })} />}
+        </main>
       </div>
-
-      {/* Add Entry modal — rendered outside the main container for proper overlay */}
-      {showAddModal && (
-        <AddEntryModal
-          state={state}
-          dispatch={dispatch}
-          onClose={() => setShowAddModal(false)}
-        />
-      )}
-
-      {/* BARCODE SCANNER — commented out
-      {showScanner && (
-        <BarcodeScanner
-          onDetect={handleBarcodeDetected}
-          onClose={() => setShowScanner(false)}
-        />
-      )}
-
-      {scanLoading && (
-        <div className="fixed inset-0 z-[58] flex items-center justify-center" style={{ backgroundColor: "rgba(0,0,0,0.5)" }}>
-          <div className="flex flex-col items-center gap-3">
-            <Loader2 size={36} color="#10b981" className="animate-spin" />
-            <p className="text-white text-sm font-medium">Looking up product…</p>
-          </div>
-        </div>
-      )}
-
-      {scanProduct && (
-        <ScanServingCard
-          product={scanProduct}
-          isDark={isDark}
-          onAdd={(entry) => {
-            dispatch({ type: "ADD_ENTRY", payload: { ...entry, id: generateId(), time: new Date().toISOString() } });
-            setScanProduct(null);
-          }}
-          onManual={() => setScanProduct(null)}
-          onClose={() => setScanProduct(null)}
-        />
-      )}
-      */}
-
-      <Analytics />
-    </>
-  );
+      <nav className="nav" aria-label="Main navigation">{tabs.map(([key, Icon, label]) => <button key={key} aria-current={tab === key ? "page" : undefined} onClick={() => { setTab(key); window.scrollTo({ top: 0, behavior: "instant" }); }}><Icon size={22} strokeWidth={tab === key ? 2.2 : 1.7} />{label}</button>)}</nav>
+    </div>
+    {sheet?.kind === "food" && <AddFood state={state} dispatch={dispatch} date={sheet.date} onClose={() => setSheet(null)} notify={notify} />}
+    {(sheet?.kind === "delete" || sheet?.kind === "reset") && <Sheet title={sheet.kind === "reset" ? "Reset all data?" : sheet.title} onClose={() => setSheet(null)}><div className="form"><p className="muted">{sheet.kind === "reset" ? "This permanently erases all food logs, weight measurements, frequent foods, goals, and preferences on this device. This cannot be undone." : sheet.description}</p><button className="button danger" onClick={() => { dispatch(sheet.kind === "reset" ? { type: "RESET_ALL" } : sheet.action); notify(sheet.kind === "reset" ? "All data reset." : "Entry deleted."); setSheet(null); }}>{sheet.kind === "reset" ? "Erase all data" : "Delete entry"}</button><button className="button full" onClick={() => setSheet(null)}>Keep {sheet.kind === "reset" ? "my data" : "entry"}</button></div></Sheet>}
+    <div role="status" aria-live="polite" aria-atomic="true">{toast && <div className="toast">{toast}</div>}</div>
+    <Analytics />
+  </div>;
 }
