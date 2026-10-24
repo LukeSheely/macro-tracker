@@ -353,8 +353,8 @@ function reducer(state, action) {
 
 // UI is self-contained so the shared stylesheet and persisted schema stay independent.
 const UI_CSS = `
-.mt { --bg:#f3f4f6; --surface:#fff; --subtle:#f0f2f5; --ink:#20232b; --muted:#646b78; --line:#e6e8ed; --green:#16744f; --green-soft:#e7f4ed; --blue:#2767bf; --glass:rgba(249,250,252,.88); --danger:#bd3542; min-height:100dvh; background:var(--bg); color:var(--ink); font:400 16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color-scheme:light; }
-.mt[data-theme="dark"] { --bg:#111416; --surface:#1d2225; --subtle:#282e32; --ink:#f3f5f4; --muted:#a5aeb3; --line:#333a3f; --green:#7bd6ac; --green-soft:#253e34; --blue:#91bcff; --glass:rgba(26,31,34,.91); --danger:#ff919b; color-scheme:dark; }
+.mt { --bg:#f3f4f6; --surface:#fff; --subtle:#f0f2f5; --ink:#20232b; --muted:#646b78; --line:#e6e8ed; --green:#16744f; --green-soft:#e7f4ed; --blue:#2767bf; --glass:rgba(249,250,252,.88); --danger:#bd3542; --amber:#a3640a; --amber-soft:#fbf0dc; min-height:100dvh; background:var(--bg); color:var(--ink); font:400 16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color-scheme:light; }
+.mt[data-theme="dark"] { --bg:#111416; --surface:#1d2225; --subtle:#282e32; --ink:#f3f5f4; --muted:#a5aeb3; --line:#333a3f; --green:#7bd6ac; --green-soft:#253e34; --blue:#91bcff; --glass:rgba(26,31,34,.91); --danger:#ff919b; --amber:#f0b45a; --amber-soft:#3d3222; color-scheme:dark; }
 .mt * { box-sizing:border-box; } .mt button,.mt input,.mt select { font:inherit; }
 .mt button { cursor:pointer; touch-action:manipulation; -webkit-tap-highlight-color:transparent; transition:background-color .15s,transform .15s,opacity .15s; }
 .mt button:active { transform:scale(.97); transition-duration:0s; }
@@ -401,7 +401,11 @@ const UI_CSS = `
 .mt .history-heading { width:100%; text-align:left; padding:20px; border:0; background:transparent; color:var(--ink); display:flex; gap:12px; align-items:center; }
 .mt .history-heading small { display:block; margin-top:4px; } .mt .history-details { border-top:1px solid var(--line); } .mt .history-actions { padding:12px 20px; display:flex; justify-content:space-between; align-items:center; gap:10px; }
 .mt .badge { display:inline-flex; align-items:center; gap:5px; font-size:.72rem; padding:4px 8px; border-radius:7px; color:var(--muted); background:var(--subtle); }
-.mt .bars { height:130px; display:flex; align-items:end; gap:8px; margin:22px 0 12px; } .mt .bar { flex:1; height:100%; display:flex; flex-direction:column; align-items:center; justify-content:end; gap:7px; } .mt .bar span { width:100%; max-width:34px; min-height:3px; border-radius:5px; background:var(--green); } .mt .bar small { font-size:.62rem; }
+.mt .bars { position:relative; height:130px; display:flex; align-items:end; gap:8px; margin:22px 0 12px; }
+.mt .bar.over span { background:var(--amber); } .mt .bar small { height:15px; line-height:15px; }
+.mt .goal-line { position:absolute; left:0; right:0; border-top:1.5px dashed var(--muted); pointer-events:none; } .mt .goal-line small { position:absolute; right:0; bottom:2px; padding:0 4px; border-radius:4px; background:var(--surface); font-size:.62rem; line-height:1.4; }
+.mt .badge.met { color:var(--green); background:var(--green-soft); } .mt .badge.above { color:var(--amber); background:var(--amber-soft); }
+.mt .history-heading .badge { margin:6px 6px 0 0; } .mt .bar { flex:1; height:100%; display:flex; flex-direction:column; align-items:center; justify-content:end; gap:7px; } .mt .bar span { width:100%; max-width:34px; min-height:3px; border-radius:5px; background:var(--green); } .mt .bar small { font-size:.62rem; }
 .mt .chart { width:100%; height:220px; margin-top:20px; } .mt .chart svg { overflow:visible; width:100%; height:100%; }
 .mt label { display:grid; gap:7px; font-size:.86rem; font-weight:600; } .mt input,.mt select { min-width:0; width:100%; min-height:50px; padding:12px 14px; background:var(--subtle); color:var(--ink); border:1px solid var(--line); border-radius:13px; outline-offset:2px; }
 .mt input::placeholder { color:var(--muted); font-weight:400; } .mt input[aria-invalid="true"] { border-color:var(--danger); }
@@ -568,6 +572,14 @@ function AddFood({ state, dispatch, date, onClose, notify }) {
   </form></Sheet>;
 }
 
+// Same definition as the "met both goals" count: within calories and at or above protein.
+function GoalBadge({ day }) {
+  if (!day.entries.length) return null;
+  if (day.totalCalories > day.goalCalories) return <span className="badge above">Above calorie goal</span>;
+  if (day.totalProtein < day.goalProtein) return <span className="badge">Protein short</span>;
+  return <span className="badge met"><Check size={12} />Goals met</span>;
+}
+
 function HistoryScreen({ state, dispatch, onAdd, onDelete }) {
   const [expanded, setExpanded] = useState(null);
   const days = state.history;
@@ -577,15 +589,18 @@ function HistoryScreen({ state, dispatch, onAdd, onDelete }) {
   const included = days.filter((d) => d.date >= since).filter((d) => d.entries.length && !state.excludedDates.includes(d.date));
   const average = (key) => included.length ? included.reduce((s, d) => s + d[key], 0) / included.length : 0;
   const chart = days.slice(0, 14).reverse();
-  const max = Math.max(1, ...chart.map((d) => d.totalCalories));
+  const goal = state.goals.calories;
+  const max = Math.max(1, goal, ...chart.map((d) => d.totalCalories));
   return <div className="columns"><section className="card pad"><div className="section-head"><h2>Your recent rhythm</h2><History size={20} color="var(--green)" /></div>
     <div className="stats"><div className="stat"><small>Average calories</small><strong>{included.length ? number(Math.round(average("totalCalories"))) : "—"}</strong><small>kcal / logged day</small></div><div className="stat"><small>Average protein</small><strong>{included.length ? number(Math.round(average("totalProtein"))) : "—"}</strong><small>g / logged day</small></div></div>
-    {chart.length > 0 && <div className="bars" role="img" aria-label="Calories for the last 14 archived days. Exact values are listed in the day cards.">{chart.map((d) => <div className="bar" key={d.date} title={formatDate(d.date) + ": " + d.totalCalories + " kcal"}><span style={{ height: Math.max(3, d.totalCalories / max * 100) + "px", opacity: state.excludedDates.includes(d.date) ? .3 : 1 }} /><small>{d.date.slice(8)}</small></div>)}</div>}
+    {chart.length > 0 && <div className="bars" role="img" aria-label={"Calories for the last 14 archived days. The dashed line marks your " + number(goal) + " kcal goal; days above that day's goal are amber. Exact values are listed in the day cards."}>{chart.map((d) => <div className={"bar" + (d.totalCalories > d.goalCalories ? " over" : "")} key={d.date} title={formatDate(d.date) + ": " + d.totalCalories + " kcal"}><span style={{ height: Math.max(3, d.totalCalories / max * 100) + "px", opacity: state.excludedDates.includes(d.date) ? .3 : 1 }} /><small>{d.date.slice(8)}</small></div>)}
+      {/* Bars sit on a 15px label plus a 7px gap. */}
+      <div className="goal-line" aria-hidden="true" style={{ bottom: 22 + goal / max * 100 + "px" }}><small>{number(goal)} goal</small></div></div>}
     <p className="note" style={{ marginTop: 18 }}>Averages use {included.length} included, nonempty {included.length === 1 ? "day" : "days"} from the past 7 days. Excluding a day keeps its food log.</p>
     <p className="note" style={{ marginTop: 10 }}>{included.filter((d) => d.totalCalories <= d.goalCalories && d.totalProtein >= d.goalProtein).length} of {included.length} included days met both goals.</p>
   </section><div className="stack">{days.length === 0 ? <section className="card"><Empty icon={History} title="A story in the making" action="Add a past meal" onAction={() => onAdd(getLocalDateString())}>Your days move here after midnight. You can also fill in a previous day.</Empty></section> : days.map((day) => {
     const open = expanded === day.date, excluded = state.excludedDates.includes(day.date);
-    return <section className="card" key={day.date}><button className="history-heading" aria-expanded={open} onClick={() => setExpanded(open ? null : day.date)}><div className="grow"><h3>{formatDate(day.date)}</h3><small>{number(day.totalCalories)} kcal · {number(day.totalProtein)} g protein</small>{excluded && <span className="badge"><EyeOff size={12} />Excluded from averages</span>}</div>{open ? <ChevronUp size={19} /> : <ChevronDown size={19} />}</button>
+    return <section className="card" key={day.date}><button className="history-heading" aria-expanded={open} onClick={() => setExpanded(open ? null : day.date)}><div className="grow"><h3>{formatDate(day.date)}</h3><small>{number(day.totalCalories)} kcal · {number(day.totalProtein)} g protein</small><GoalBadge day={day} />{excluded && <span className="badge"><EyeOff size={12} />Excluded from averages</span>}</div>{open ? <ChevronUp size={19} /> : <ChevronDown size={19} />}</button>
       {open && <div className="history-details"><div className="history-actions"><small>Goals: {number(day.goalCalories)} kcal · {number(day.goalProtein)} g</small><button className="icon" aria-label={excluded ? "Include day in averages" : "Exclude day from averages"} aria-pressed={excluded} onClick={() => dispatch({ type: "TOGGLE_EXCLUDE_DATE", payload: day.date })}>{excluded ? <EyeOff size={18} /> : <Eye size={18} />}</button></div>
       {day.entries.length ? <FoodList entries={day.entries} onDelete={(entry) => onDelete(entry, day.date)} /> : <p className="note pad">No food recorded for this day.</p>}<div className="history-actions"><button className="text-button row" onClick={() => onAdd(day.date)}><Plus size={18} />Add food to this day</button></div></div>}
     </section>;
@@ -602,11 +617,13 @@ function WeightScreen({ state, dispatch, notify, onDelete }) {
   const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - range + 1); cutoff.setHours(0, 0, 0, 0);
   const points = [...state.weightLog].reverse().filter((e) => new Date(e.date + "T12:00:00") >= cutoff);
   const values = points.map((e) => convertWeight(e, unit));
+  // Change across the selected range, rounded first so tiny differences don't show as "−0".
+  const change = points.length > 1 ? Math.round((values[values.length - 1] - values[0]) * 10) / 10 : null;
   const low = Math.min(...values) - 1, high = Math.max(...values) + 1;
   const timestamps = points.map((e) => new Date(e.date + "T12:00:00").getTime());
   const coords = values.map((v, i) => [points.length === 1 ? 220 : 30 + (timestamps[i] - timestamps[0]) / Math.max(1, timestamps[timestamps.length - 1] - timestamps[0]) * 380, 160 - (v - low) / (high - low) * 125]);
   const log = (e) => { e.preventDefault(); if (!Number.isFinite(Number(value)) || Number(value) <= 0 || Number(value) > 1500) return; dispatch({ type: "LOG_WEIGHT", payload: { weight: Number(value), unit } }); setValue(""); notify("Weight saved for today."); };
-  return <div className="columns"><section className="card pad"><div className="section-head"><h2>Weight trend</h2><Scale size={20} color="var(--green)" /></div><strong className="number">{latest ? number(convertWeight(latest, unit)) : "—"} <small style={{ fontSize: "1rem" }}>{unit}</small></strong><p className="note">{latest ? "Latest · " + formatDate(latest.date) : "Your measurements, at your pace."}</p>
+  return <div className="columns"><section className="card pad"><div className="section-head"><h2>Weight trend</h2><Scale size={20} color="var(--green)" /></div><strong className="number">{latest ? number(convertWeight(latest, unit)) : "—"} <small style={{ fontSize: "1rem" }}>{unit}</small></strong><p className="note">{latest ? "Latest · " + formatDate(latest.date) : "Your measurements, at your pace."}</p>{change !== null && <p style={{ marginTop: 6, fontWeight: 650 }}>{(change > 0 ? "+" : change < 0 ? "\u2212" : "") + number(Math.abs(change))} {unit} <span className="muted" style={{ fontWeight: 400 }}>since {formatDate(points[0].date)}</span></p>}
     <div className="segments" style={{ marginTop: 22 }}>{[30, 90, 365].map((r) => <button key={r} aria-pressed={range === r} onClick={() => setRange(r)}>{r === 365 ? "1 year" : r + " days"}</button>)}</div>
     {points.length ? <><div className="chart"><svg viewBox="0 0 440 200" role="img" aria-label={"Weight in " + unit + " over " + points.length + " measurements; values listed below."}>{[40, 100, 160].map((y) => <line key={y} x1="30" x2="410" y1={y} y2={y} stroke="var(--line)" strokeDasharray="3 5" />)}<text x="30" y="20" fontSize="11" fill="var(--muted)">{number(high)} {unit}</text><text x="30" y="188" fontSize="11" fill="var(--muted)">{number(low)} {unit}</text><polyline points={coords.map((p) => p.join(",")).join(" ")} fill="none" stroke="var(--green)" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" />{coords.map(([x, y], i) => <circle key={points[i].id} cx={x} cy={y} r="4" fill="var(--surface)" stroke="var(--green)" strokeWidth="2"><title>{formatDate(points[i].date)}: {number(values[i])} {unit}</title></circle>)}</svg></div><div className="row between note"><span>{formatDate(points[0].date)}</span><span>{points.length > 1 ? formatDate(points[points.length - 1].date) : "First measurement"}</span></div></> : <Empty icon={Scale} title="Room to grow">Log a measurement to start your trend. No measurements in this date range yet.</Empty>}
   </section><div className="stack"><section className="card pad"><h2 style={{ marginBottom: 18 }}>Log today's weight</h2><form className="form" onSubmit={log}><div className="fields"><label>Weight<input type="number" required step="any" min=".01" max="1500" inputMode="decimal" placeholder={unit === "kg" ? "70.0" : "154.0"} value={value} onChange={(e) => setValue(e.target.value)} /></label><label>Unit<select value={unit} onChange={(e) => { dispatch({ type: "SET_WEIGHT_UNIT", payload: e.target.value }); if (value && Number.isFinite(Number(value))) setValue(String(Math.round(convertWeight({ weight: Number(value), unit }, e.target.value) * 10) / 10)); }}><option value="lbs">Pounds · lbs</option><option value="kg">Kilograms · kg</option></select></label></div><p className="note">One measurement per day. Saving again updates today's measurement.</p><button className="button primary"><Plus size={18} />Save weight</button></form></section>
