@@ -15,7 +15,7 @@ Most calorie trackers are bloated with social feeds, premium upsells, and forced
 
 ## Features
 
-**Barcode Scanner**
+**Barcode Scanner** *(currently disabled; the code is commented out in `MacroTracker.jsx`)*
 - Tap the scan icon to open a full-screen camera scanner (mobile only)
 - Automatically looks up nutrition data via the free Open Food Facts database
 - Shows a serving size card — enter servings or grams, see live calorie/protein totals
@@ -26,26 +26,28 @@ Most calorie trackers are bloated with social feeds, premium upsells, and forced
 - Log calories and protein per meal with a quick-entry form
 - Circular progress rings show real-time progress toward daily goals
 - Frequent foods are remembered for one-tap quick-add
+- Backfill or delete entries for previous days
 
 **Weight Tracking**
 - Log daily weigh-ins in lbs or kg
-- Line chart shows your trend over the last 14 entries
+- One measurement per day; line chart over the last 30 days, 90 days or year
 
 **History & Insights**
 - Past days are automatically archived at midnight
-- 7-day rolling averages for calories, protein, and goal adherence
+- 7-day averages for calories, protein, and goal adherence, with per-day exclusion
 - Bar chart visualization of the last 14 days
 - Expandable day-by-day breakdown with individual entries
 
 **Settings & Customization**
 - Adjustable calorie and protein goals with preset shortcuts
 - Dark / light theme toggle
+- Download a JSON backup and restore it later or on another device
 - Full data reset option
 
 **Privacy-First**
 - 100% client-side — all data lives in `localStorage`
-- No accounts, no tracking, no backend
-- Works offline after first load (scanner requires network for nutrition lookup)
+- No accounts and no backend; the only network use is anonymous Vercel page-view analytics
+- Open the app in several tabs safely: each tab picks up the others' changes
 
 ## Tech Stack
 
@@ -54,7 +56,7 @@ Most calorie trackers are bloated with social feeds, premium upsells, and forced
 | Framework        | React 18                                        |
 | Bundler          | Vite 6                                          |
 | Styling          | Tailwind CSS 3                                  |
-| Charts           | Recharts                                        |
+| Charts           | Hand-rolled SVG                                 |
 | Icons            | Lucide React                                    |
 | Barcode scanning | Native `BarcodeDetector` API + `@zxing/browser` |
 | Nutrition data   | Open Food Facts API (free, no key required)     |
@@ -65,7 +67,7 @@ Most calorie trackers are bloated with social feeds, premium upsells, and forced
 
 ```bash
 # Clone the repo
-git clone https://github.com/your-username/macro-tracker.git
+git clone https://github.com/LukeSheely/macro-tracker.git
 cd macro-tracker
 
 # Install dependencies
