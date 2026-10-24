@@ -19,6 +19,9 @@ import {
 const STORAGE_KEY = "macroTracker_v1";
 const MAX_HISTORY_DAYS = 90;
 const MAX_FREQUENT_FOODS = 10;
+// Track more foods than are shown, so a new food can build up a count instead of
+// being evicted immediately once the visible list is full.
+const MAX_TRACKED_FOODS = 50;
 const DATE_CHECK_INTERVAL_MS = 30_000; // 30 seconds
 
 const DEFAULT_STATE = {
@@ -103,14 +106,44 @@ function formatTime(isoStr) {
   });
 }
 
+/** Fills in missing or malformed fields so older or hand-edited data cannot crash the app. */
+function normalizeState(saved) {
+  if (!saved || typeof saved !== "object") return null;
+  const list = (value) => (Array.isArray(value) ? value : []);
+  const day = (d) => d && typeof d.date === "string" ? { ...d, entries: list(d.entries) } : null;
+  const goals = saved.goals || {};
+  return {
+    ...DEFAULT_STATE,
+    ...saved,
+    goals: {
+      calories: Number.isFinite(Number(goals.calories)) ? Number(goals.calories) : DEFAULT_STATE.goals.calories,
+      protein: Number.isFinite(Number(goals.protein)) ? Number(goals.protein) : DEFAULT_STATE.goals.protein,
+    },
+    today: day(saved.today) || { date: "", entries: [] },
+    history: list(saved.history).map(day).filter(Boolean),
+    frequentFoods: list(saved.frequentFoods).filter((f) => f && typeof f.name === "string"),
+    weightLog: list(saved.weightLog).filter((e) => e && typeof e.date === "string" && Number.isFinite(e.weight)),
+    excludedDates: list(saved.excludedDates),
+    theme: saved.theme === "light" ? "light" : "dark",
+    weightUnit: saved.weightUnit === "kg" ? "kg" : "lbs",
+  };
+}
+
 /** Loads and parses state from localStorage. Returns null on failure. */
 function loadState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : null;
+    return raw ? normalizeState(JSON.parse(raw)) : null;
   } catch {
     return null;
   }
+}
+
+/** Brings a loaded state up to the current date, archiving a stale "today". */
+function prepareState(saved, currentDate = getLocalDateString()) {
+  if (!saved) return { ...DEFAULT_STATE, today: { date: currentDate, entries: [] } };
+  if (saved.today.date !== currentDate) return performDailyReset(saved, currentDate);
+  return saved;
 }
 
 /** Saves state to localStorage. Silent on failure. */
@@ -140,20 +173,29 @@ function performDailyReset(state, newDate) {
       { calories: 0, protein: 0 }
     );
 
-    newHistory.unshift({
-      date: prevToday.date,
-      goalCalories: state.goals?.calories ?? 2000,
-      goalProtein: state.goals?.protein ?? 150,
-      totalCalories: totals.calories,
-      totalProtein: totals.protein,
-      entries: prevToday.entries || [],
-    });
+    // Merge rather than duplicate if the day is already archived (e.g. the clock
+    // was changed), which would otherwise create two cards with the same key.
+    const existing = newHistory.findIndex((d) => d.date === prevToday.date);
+    if (existing >= 0) {
+      const entries = [...newHistory[existing].entries, ...(prevToday.entries || [])];
+      const merged = totalEntries(entries);
+      newHistory[existing] = { ...newHistory[existing], entries, totalCalories: merged.calories, totalProtein: merged.protein };
+    } else {
+      newHistory.push({
+        date: prevToday.date,
+        goalCalories: state.goals?.calories ?? 2000,
+        goalProtein: state.goals?.protein ?? 150,
+        totalCalories: totals.calories,
+        totalProtein: totals.protein,
+        entries: prevToday.entries || [],
+      });
+    }
   }
 
   return {
     ...state,
     today: { date: newDate, entries: [] },
-    history: newHistory.slice(0, MAX_HISTORY_DAYS),
+    history: newHistory.sort((a, b) => b.date.localeCompare(a.date)).slice(0, MAX_HISTORY_DAYS),
   };
 }
 
@@ -161,45 +203,45 @@ function performDailyReset(state, newDate) {
 // REDUCER
 // ============================================================
 
+function totalEntries(entries) {
+  return entries.reduce((sum, e) => ({ calories: sum.calories + (e.calories || 0), protein: sum.protein + (e.protein || 0) }), { calories: 0, protein: 0 });
+}
+
+function makeEntry({ name, calories, protein }) {
+  return {
+    id: generateId(),
+    name: name || "Food",
+    calories: Math.max(0, Math.min(10000, Number(calories) || 0)),
+    protein: Math.max(0, Math.min(1000, Number(protein) || 0)),
+    time: new Date().toISOString(),
+  };
+}
+
+/** Bumps a food's use count. Ties are broken by most recent use. */
+function recordFrequentFood(frequentFoods, entry) {
+  const foods = [...(frequentFoods || [])];
+  const idx = foods.findIndex((f) => f.name.toLowerCase() === entry.name.toLowerCase());
+  const used = { name: entry.name, calories: entry.calories, protein: entry.protein, lastUsed: entry.time };
+  if (idx >= 0) foods[idx] = { ...foods[idx], ...used, count: foods[idx].count + 1 };
+  else foods.push({ ...used, count: 1 });
+  foods.sort((a, b) => b.count - a.count || (b.lastUsed || "").localeCompare(a.lastUsed || ""));
+  return foods.slice(0, MAX_TRACKED_FOODS);
+}
+
 function reducer(state, action) {
   switch (action.type) {
     case "INIT":
       return action.payload;
 
     case "ADD_ENTRY": {
-      const entry = {
-        id: generateId(),
-        name: action.payload.name || "Food",
-        calories: Math.max(0, Math.min(10000, Number(action.payload.calories) || 0)),
-        protein: Math.max(0, Math.min(1000, Number(action.payload.protein) || 0)),
-        time: new Date().toISOString(),
-      };
-
-      // Update frequent foods frequency counter
-      let newFrequent = [...(state.frequentFoods || [])];
-      const existingIdx = newFrequent.findIndex(
-        (f) => f.name.toLowerCase() === entry.name.toLowerCase()
-      );
-      if (existingIdx >= 0) {
-        newFrequent[existingIdx] = {
-          ...newFrequent[existingIdx],
-          count: newFrequent[existingIdx].count + 1,
-          calories: entry.calories,
-          protein: entry.protein,
-        };
-      } else {
-        newFrequent.push({ name: entry.name, calories: entry.calories, protein: entry.protein, count: 1 });
-      }
-      newFrequent.sort((a, b) => b.count - a.count);
-      newFrequent = newFrequent.slice(0, MAX_FREQUENT_FOODS);
-
+      const entry = makeEntry(action.payload);
       return {
         ...state,
         today: {
           ...state.today,
           entries: [...(state.today.entries || []), entry],
         },
-        frequentFoods: newFrequent,
+        frequentFoods: recordFrequentFood(state.frequentFoods, entry),
       };
     }
 
@@ -213,23 +255,9 @@ function reducer(state, action) {
       };
 
     case "ADD_ENTRY_TO_DATE": {
-      const { date, name, calories, protein } = action.payload;
-      const entry = {
-        id: generateId(),
-        name: name || "Food",
-        calories: Math.max(0, Math.min(10000, Number(calories) || 0)),
-        protein: Math.max(0, Math.min(1000, Number(protein) || 0)),
-        time: new Date().toISOString(),
-      };
-      let newFrequent = [...(state.frequentFoods || [])];
-      const fi = newFrequent.findIndex((f) => f.name.toLowerCase() === entry.name.toLowerCase());
-      if (fi >= 0) {
-        newFrequent[fi] = { ...newFrequent[fi], count: newFrequent[fi].count + 1, calories: entry.calories, protein: entry.protein };
-      } else {
-        newFrequent.push({ name: entry.name, calories: entry.calories, protein: entry.protein, count: 1 });
-      }
-      newFrequent.sort((a, b) => b.count - a.count);
-      newFrequent = newFrequent.slice(0, MAX_FREQUENT_FOODS);
+      const { date } = action.payload;
+      const entry = makeEntry(action.payload);
+      const newFrequent = recordFrequentFood(state.frequentFoods, entry);
       const existingIdx = (state.history || []).findIndex((d) => d.date === date);
       let newHistory;
       if (existingIdx >= 0) {
@@ -396,7 +424,6 @@ const UI_CSS = `
 `;
 
 const number = (value) => Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 1 });
-const totalEntries = (entries) => entries.reduce((sum, e) => ({ calories: sum.calories + e.calories, protein: sum.protein + e.protein }), { calories: 0, protein: 0 });
 
 function Empty({ icon: Icon = Flame, title, children, action, onAction }) {
   return <div className="empty"><div className="empty-icon"><Icon size={27} strokeWidth={1.6} /></div><h3>{title}</h3><p>{children}</p>{action && <button className="button soft" onClick={onAction}><Plus size={18} />{action}</button>}</div>;
@@ -504,7 +531,7 @@ function TodayScreen({ state, onAdd, onDelete }) {
     </section>
     <div className="stack">
       <section className="card pad"><div className="section-head"><h2>Protein</h2><Target size={19} color="var(--blue)" /></div><div className="row between"><strong className="number" style={{ fontSize: "2rem" }}>{number(totals.protein)}<small style={{ fontSize: "1rem", letterSpacing: 0 }}> g</small></strong><span className="muted">of {number(state.goals.protein)} g</span></div><div className="track"><span style={{ background: "var(--blue)", width: Math.min(100, totals.protein / Math.max(1, state.goals.protein) * 100) + "%" }} /></div><p className="note" style={{ marginTop: 12 }}>{totals.protein >= state.goals.protein ? "You've reached your protein goal." : number(state.goals.protein - totals.protein) + " g to your daily goal."}</p></section>
-      <section className="card"><div className="pad section-head" style={{ marginBottom: 0 }}><div><h2>Food log</h2><small>{state.today.entries.length} {state.today.entries.length === 1 ? "entry" : "entries"} today</small></div><button className="text-button" onClick={onAdd}><Plus size={22} aria-label="Add food" /></button></div>
+      <section className="card"><div className="pad section-head" style={{ marginBottom: 0 }}><div><h2>Food log</h2><small>{state.today.entries.length} {state.today.entries.length === 1 ? "entry" : "entries"} today</small></div><button className="text-button" aria-label="Add food" onClick={onAdd}><Plus size={22} /></button></div>
         {state.today.entries.length ? <FoodList entries={[...state.today.entries].reverse()} onDelete={onDelete} /> : <Empty title="Your day starts here" action="Log your first food" onAction={onAdd}>Add a meal or snack to see your daily picture take shape.</Empty>}
       </section>
     </div>
@@ -530,7 +557,7 @@ function AddFood({ state, dispatch, date, onClose, notify }) {
     else { notify(confirmation); onClose(); }
   };
   return <Sheet title="Add food" onClose={onClose}><form className="form" onSubmit={submit}>
-    {state.frequentFoods.length > 0 && <div><p className="eyebrow" style={{ marginBottom: 8 }}>Your frequent foods</p><div className="recent">{state.frequentFoods.map((f) => <button key={f.name} type="button" onClick={() => { setForm((v) => ({ ...v, name: f.name, calories: String(f.calories), protein: String(f.protein) })); setError(""); }}><span className="food-name">{f.name}</span><small>{number(f.calories)} kcal · {number(f.protein)} g protein</small></button>)}</div></div>}
+    {state.frequentFoods.length > 0 && <div><p className="eyebrow" style={{ marginBottom: 8 }}>Your frequent foods</p><div className="recent">{state.frequentFoods.slice(0, MAX_FREQUENT_FOODS).map((f) => <button key={f.name} type="button" onClick={() => { setForm((v) => ({ ...v, name: f.name, calories: String(f.calories), protein: String(f.protein) })); setError(""); }}><span className="food-name">{f.name}</span><small>{number(f.calories)} kcal · {number(f.protein)} g protein</small></button>)}</div></div>}
     {message && <p className="success" role="status"><Check size={18} />{message}</p>}
     <label>Food name <input ref={nameInput} value={form.name} onChange={(e) => change("name", e.target.value)} placeholder="e.g. Greek yogurt & berries" maxLength={160} /></label>
     <div className="fields"><label>Calories · kcal<input type="number" inputMode="decimal" min="0" max="10000" step="any" required value={form.calories} onChange={(e) => change("calories", e.target.value)} placeholder="0" /></label><label>Protein · g<input type="number" inputMode="decimal" min="0" max="1000" step="any" required value={form.protein} onChange={(e) => change("protein", e.target.value)} placeholder="0" /></label></div>
@@ -544,14 +571,17 @@ function AddFood({ state, dispatch, date, onClose, notify }) {
 function HistoryScreen({ state, dispatch, onAdd, onDelete }) {
   const [expanded, setExpanded] = useState(null);
   const days = state.history;
-  const included = days.slice(0, 7).filter((d) => d.entries.length && !state.excludedDates.includes(d.date));
+  // A calendar week, so a gap in logging cannot pull weeks-old days into the average.
+  const weekAgo = new Date(); weekAgo.setDate(weekAgo.getDate() - 7);
+  const since = new Intl.DateTimeFormat("en-CA").format(weekAgo);
+  const included = days.filter((d) => d.date >= since).filter((d) => d.entries.length && !state.excludedDates.includes(d.date));
   const average = (key) => included.length ? included.reduce((s, d) => s + d[key], 0) / included.length : 0;
   const chart = days.slice(0, 14).reverse();
   const max = Math.max(1, ...chart.map((d) => d.totalCalories));
   return <div className="columns"><section className="card pad"><div className="section-head"><h2>Your recent rhythm</h2><History size={20} color="var(--green)" /></div>
     <div className="stats"><div className="stat"><small>Average calories</small><strong>{included.length ? number(Math.round(average("totalCalories"))) : "—"}</strong><small>kcal / logged day</small></div><div className="stat"><small>Average protein</small><strong>{included.length ? number(Math.round(average("totalProtein"))) : "—"}</strong><small>g / logged day</small></div></div>
     {chart.length > 0 && <div className="bars" role="img" aria-label="Calories for the last 14 archived days. Exact values are listed in the day cards.">{chart.map((d) => <div className="bar" key={d.date} title={formatDate(d.date) + ": " + d.totalCalories + " kcal"}><span style={{ height: Math.max(3, d.totalCalories / max * 100) + "px", opacity: state.excludedDates.includes(d.date) ? .3 : 1 }} /><small>{d.date.slice(8)}</small></div>)}</div>}
-    <p className="note" style={{ marginTop: 18 }}>Averages use {included.length} included, nonempty {included.length === 1 ? "day" : "days"} from your last 7 archived days. Excluding a day keeps its food log.</p>
+    <p className="note" style={{ marginTop: 18 }}>Averages use {included.length} included, nonempty {included.length === 1 ? "day" : "days"} from the past 7 days. Excluding a day keeps its food log.</p>
     <p className="note" style={{ marginTop: 10 }}>{included.filter((d) => d.totalCalories <= d.goalCalories && d.totalProtein >= d.goalProtein).length} of {included.length} included days met both goals.</p>
   </section><div className="stack">{days.length === 0 ? <section className="card"><Empty icon={History} title="A story in the making" action="Add a past meal" onAction={() => onAdd(getLocalDateString())}>Your days move here after midnight. You can also fill in a previous day.</Empty></section> : days.map((day) => {
     const open = expanded === day.date, excluded = state.excludedDates.includes(day.date);
@@ -583,23 +613,44 @@ function WeightScreen({ state, dispatch, notify, onDelete }) {
   <section className="card"><div className="pad"><h2>Measurements</h2><small>Displayed in {unit}; original units are preserved.</small></div>{state.weightLog.length ? state.weightLog.map((entry) => <div className="food-row" key={entry.id}><div className="grow"><h3>{formatDate(entry.date)}</h3><small>{formatTime(entry.time)}</small></div><strong>{number(convertWeight(entry, unit))} <small>{unit}</small></strong><button className="icon" aria-label={"Delete weight for " + formatDate(entry.date)} onClick={() => onDelete(entry)}><Trash2 size={17} /></button></div>) : <p className="note pad">Your saved measurements will appear here.</p>}</section></div></div>;
 }
 
-function SettingsScreen({ state, dispatch, onReset, notify }) {
+function backupFileName() {
+  return "macrotracker-backup-" + getLocalDateString() + ".json";
+}
+
+function SettingsScreen({ state, dispatch, onReset, onImport, notify }) {
+  const fileInput = useRef(null);
+  const exportData = () => {
+    const url = URL.createObjectURL(new Blob([JSON.stringify({ app: "macroTracker", version: 1, exportedAt: new Date().toISOString(), data: state }, null, 2)], { type: "application/json" }));
+    const link = document.createElement("a");
+    link.href = url; link.download = backupFileName();
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    notify("Backup downloaded.");
+  };
+  const importData = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    try {
+      const parsed = JSON.parse(await file.text());
+      const data = normalizeState(parsed?.app === "macroTracker" ? parsed.data : parsed);
+      if (!data || (!data.today.entries.length && !data.history.length && !data.weightLog.length)) throw new Error("empty");
+      onImport(data);
+    } catch {
+      notify("That file isn't a MacroTracker backup.");
+    }
+  };
   const [goals, setGoals] = useState({ calories: String(state.goals.calories), protein: String(state.goals.protein) });
   const presets = { calories: [1500, 1800, 2000, 2200, 2500, 3000], protein: [100, 120, 150, 175, 200] };
   const save = (e) => { e.preventDefault(); dispatch({ type: "UPDATE_GOALS", payload: { calories: Number(goals.calories), protein: Number(goals.protein) } }); notify("Daily goals updated."); };
   return <div className="columns"><section className="card pad"><div className="section-head"><h2>Daily goals</h2><Target size={20} color="var(--green)" /></div><p className="note" style={{ marginBottom: 22 }}>Make these yours. Updated goals apply to today and future logs.</p><form className="form" onSubmit={save}>{["calories", "protein"].map((key) => <div className="form" key={key} style={{ gap: 10 }}><label>{key === "calories" ? "Energy · kcal" : "Protein · g"}<input required type="number" step="any" min={key === "calories" ? 0 : 10} max={key === "calories" ? 10000 : 1000} value={goals[key]} onChange={(e) => setGoals((g) => ({ ...g, [key]: e.target.value }))} /></label><div className="presets">{presets[key].map((v) => <button key={v} type="button" aria-pressed={Number(goals[key]) === v} onClick={() => setGoals((g) => ({ ...g, [key]: String(v) }))}>{number(v)}</button>)}</div></div>)}<button className="button primary" type="submit"><Check size={18} />Save goals</button></form></section>
     <div className="stack"><section className="card pad"><h2 style={{ marginBottom: 18 }}>Appearance</h2><div className="segments">{[["light", Sun], ["dark", Moon]].map(([theme, Icon]) => <button key={theme} className="row" aria-pressed={state.theme === theme} onClick={() => dispatch({ type: "SET_THEME", payload: theme })}><Icon size={18} />{theme === "light" ? "Light" : "Dark"}</button>)}</div></section>
-    <section className="card pad"><div className="section-head"><h2>On this device</h2><Check size={20} color="var(--green)" /></div><p className="note">Your food logs, goals, and weight measurements are saved in this browser. Clearing browser data removes them. History retains up to 90 days during daily rollover.</p></section>
+    <section className="card pad"><div className="section-head"><h2>On this device</h2><Check size={20} color="var(--green)" /></div><p className="note">Your food logs, goals, and weight measurements are saved in this browser. Clearing browser data removes them, so download a backup now and then. History keeps the most recent 90 days.</p><div className="fields" style={{ marginTop: 18 }}><button className="button soft" onClick={exportData}>Download backup</button><button className="button" onClick={() => fileInput.current?.click()}>Restore backup</button></div><input ref={fileInput} type="file" accept="application/json,.json" hidden onChange={importData} /></section>
     <section className="card pad"><h2>Start fresh</h2><p className="note" style={{ margin: "10px 0 18px" }}>Erase all logs, frequent foods, and preferences, and restore the default goals.</p><button className="button danger full" onClick={onReset}><RotateCcw size={17} />Reset all data</button></section></div></div>;
 }
 
 export default function MacroTracker() {
-  const [state, dispatch] = useReducer(reducer, null, () => {
-    const currentDate = getLocalDateString(), saved = loadState();
-    if (!saved) return { ...DEFAULT_STATE, today: { date: currentDate, entries: [] } };
-    if (saved.today?.date && saved.today.date !== currentDate) return performDailyReset({ ...DEFAULT_STATE, ...saved }, currentDate);
-    return { ...DEFAULT_STATE, ...saved };
-  });
+  const [state, dispatch] = useReducer(reducer, null, () => prepareState(loadState()));
   const [tab, setTab] = useState("today");
   const [sheet, setSheet] = useState(null);
   const [toast, setToast] = useState("");
@@ -617,10 +668,19 @@ export default function MacroTracker() {
   }, [state.theme]);
   useEffect(() => {
     const check = () => { const date = getLocalDateString(); if (state.today.date !== date) dispatch({ type: "DAILY_RESET", payload: date }); };
+    const visible = () => { if (document.visibilityState === "visible") check(); };
     const interval = setInterval(check, DATE_CHECK_INTERVAL_MS);
     window.addEventListener("focus", check);
-    return () => { clearInterval(interval); window.removeEventListener("focus", check); };
+    // Mobile browsers and home-screen apps resume without a focus event.
+    document.addEventListener("visibilitychange", visible);
+    return () => { clearInterval(interval); window.removeEventListener("focus", check); document.removeEventListener("visibilitychange", visible); };
   }, [state.today.date]);
+  useEffect(() => {
+    // Another tab saved: adopt its data so this tab's next save doesn't overwrite it.
+    const sync = (e) => { if (e.key === STORAGE_KEY && e.newValue) { const saved = loadState(); if (saved) dispatch({ type: "INIT", payload: prepareState(saved) }); } };
+    window.addEventListener("storage", sync);
+    return () => window.removeEventListener("storage", sync);
+  }, []);
   const add = (date = getLocalDateString()) => setSheet({ kind: "food", date });
   const removeFood = (entry, date) => setSheet({ kind: "delete", title: "Delete food?", description: entry.name + " will be removed from " + (date ? formatDate(date) : "today's log") + ".", action: date ? { type: "DELETE_ENTRY_FROM_DATE", payload: { date, id: entry.id } } : { type: "DELETE_ENTRY", payload: entry.id } });
   const tabs = [["today", Flame, "Today"], ["history", History, "History"], ["weight", Scale, "Weight"], ["settings", Settings, "Settings"]];
@@ -637,13 +697,14 @@ export default function MacroTracker() {
           {tab === "today" && <TodayScreen state={state} onAdd={() => add()} onDelete={(entry) => removeFood(entry)} />}
           {tab === "history" && <HistoryScreen state={state} dispatch={dispatch} onAdd={add} onDelete={removeFood} />}
           {tab === "weight" && <WeightScreen state={state} dispatch={dispatch} notify={notify} onDelete={(entry) => setSheet({ kind: "delete", title: "Delete measurement?", description: "Remove the weight recorded for " + formatDate(entry.date) + ".", action: { type: "DELETE_WEIGHT", payload: entry.id } })} />}
-          {tab === "settings" && <SettingsScreen state={state} dispatch={dispatch} notify={notify} onReset={() => setSheet({ kind: "reset" })} />}
+          {tab === "settings" && <SettingsScreen key={state.goals.calories + "-" + state.goals.protein} state={state} dispatch={dispatch} notify={notify} onReset={() => setSheet({ kind: "reset" })} onImport={(data) => setSheet({ kind: "import", data })} />}
         </main>
       </div>
       <nav className="nav" aria-label="Main navigation">{tabs.map(([key, Icon, label]) => <button key={key} aria-current={tab === key ? "page" : undefined} onClick={() => { setTab(key); window.scrollTo({ top: 0, behavior: "instant" }); }}><Icon size={22} strokeWidth={tab === key ? 2.2 : 1.7} />{label}</button>)}</nav>
     </div>
     {sheet?.kind === "food" && <AddFood state={state} dispatch={dispatch} date={sheet.date} onClose={() => setSheet(null)} notify={notify} />}
     {(sheet?.kind === "delete" || sheet?.kind === "reset") && <Sheet title={sheet.kind === "reset" ? "Reset all data?" : sheet.title} onClose={() => setSheet(null)}><div className="form"><p className="muted">{sheet.kind === "reset" ? "This permanently erases all food logs, weight measurements, frequent foods, goals, and preferences on this device. This cannot be undone." : sheet.description}</p><button className="button danger" onClick={() => { dispatch(sheet.kind === "reset" ? { type: "RESET_ALL" } : sheet.action); notify(sheet.kind === "reset" ? "All data reset." : "Entry deleted."); setSheet(null); }}>{sheet.kind === "reset" ? "Erase all data" : "Delete entry"}</button><button className="button full" onClick={() => setSheet(null)}>Keep {sheet.kind === "reset" ? "my data" : "entry"}</button></div></Sheet>}
+    {sheet?.kind === "import" && <Sheet title="Restore backup?" onClose={() => setSheet(null)}><div className="form"><p className="muted">This replaces everything on this device with the backup: {sheet.data.history.length} archived {sheet.data.history.length === 1 ? "day" : "days"} and {sheet.data.weightLog.length} weight {sheet.data.weightLog.length === 1 ? "measurement" : "measurements"}. Download a backup of your current data first if you might want it.</p><button className="button primary" onClick={() => { dispatch({ type: "INIT", payload: prepareState(sheet.data) }); notify("Backup restored."); setSheet(null); }}>Replace with backup</button><button className="button full" onClick={() => setSheet(null)}>Cancel</button></div></Sheet>}
     <div role="status" aria-live="polite" aria-atomic="true">{toast && <div className="toast">{toast}</div>}</div>
     <Analytics />
   </div>;
