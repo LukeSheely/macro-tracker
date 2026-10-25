@@ -28,6 +28,24 @@ Most calorie trackers are bloated with social feeds, premium upsells, and forced
 - Frequent foods are remembered for one-tap quick-add
 - Backfill or delete entries for previous days
 
+**Log from Claude (JSON patch)**
+- Tell Claude what you ate; it replies with a JSON block
+- Tap the clipboard icon on Today → **Paste from clipboard**, review, then **Log**
+- Entries can target past days, and a patch can also update goals
+- Each patch's `id` is applied only once, so pasting twice won't double-log
+
+```json
+{
+  "macroTracker": "patch",
+  "id": "2026-10-25-lunch",
+  "entries": [
+    { "name": "Chicken wrap", "calories": 520, "protein": 38, "date": "2026-10-25" }
+  ],
+  "goals": { "calories": 2200, "protein": 160 }
+}
+```
+`date` (defaults to today), `goals`, and `id` are optional. A bare array of entries also works.
+
 **Weight Tracking**
 - Log daily weigh-ins in lbs or kg
 - One measurement per day; line chart over the last 30 days, 90 days or year
