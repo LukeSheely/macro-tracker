@@ -6,7 +6,7 @@ import { useState, useEffect, useReducer, useRef } from "react";
 import { Analytics } from "@vercel/analytics/react";
 import {
   Plus, Flame, History, Settings, Trash2, X, Moon, Sun,
-  ChevronUp, ChevronDown, Check, RotateCcw, Scale, EyeOff, Eye,
+  ChevronUp, ChevronDown, Check, RotateCcw, Scale, EyeOff, Eye, ClipboardPaste,
   // ScanBarcode, Loader2,  // barcode scanner — commented out
 } from "lucide-react";
 // import { BrowserMultiFormatReader } from "@zxing/browser";   // barcode scanner — commented out
@@ -23,6 +23,9 @@ const MAX_FREQUENT_FOODS = 10;
 // being evicted immediately once the visible list is full.
 const MAX_TRACKED_FOODS = 50;
 const DATE_CHECK_INTERVAL_MS = 30_000; // 30 seconds
+// IDs of pasted patches already applied, so pasting the same one twice can't double-log.
+const MAX_APPLIED_PATCHES = 200;
+const MAX_PATCH_ENTRIES = 100;
 
 const DEFAULT_STATE = {
   goals: { calories: 2000, protein: 150 },
@@ -33,6 +36,7 @@ const DEFAULT_STATE = {
   weightLog: [],
   weightUnit: "lbs",
   excludedDates: [],
+  appliedPatches: [],
 };
 
 /** Returns today's date string (YYYY-MM-DD) in the user's local timezone. */
@@ -124,6 +128,7 @@ function normalizeState(saved) {
     frequentFoods: list(saved.frequentFoods).filter((f) => f && typeof f.name === "string"),
     weightLog: list(saved.weightLog).filter((e) => e && typeof e.date === "string" && Number.isFinite(e.weight)),
     excludedDates: list(saved.excludedDates),
+    appliedPatches: list(saved.appliedPatches).filter((id) => typeof id === "string"),
     theme: saved.theme === "light" ? "light" : "dark",
     weightUnit: saved.weightUnit === "kg" ? "kg" : "lbs",
   };
@@ -197,6 +202,79 @@ function performDailyReset(state, newDate) {
     today: { date: newDate, entries: [] },
     history: newHistory.sort((a, b) => b.date.localeCompare(a.date)).slice(0, MAX_HISTORY_DAYS),
   };
+}
+
+// ============================================================
+// JSON PATCHES (food logged from a chat with an assistant)
+// ============================================================
+//
+// Format (code fences and surrounding text are ignored):
+// {
+//   "macroTracker": "patch",
+//   "id": "2026-10-25-lunch",                 // optional; the same id is only applied once
+//   "entries": [
+//     { "name": "Chicken wrap", "calories": 520, "protein": 38, "date": "2026-10-25" }  // date optional = today
+//   ],
+//   "goals": { "calories": 2200, "protein": 160 }  // optional
+// }
+// A bare array of entries is also accepted.
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Pulls the first JSON object or array out of pasted text (e.g. a ```json block). */
+function extractJson(text) {
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const body = (fenced ? fenced[1] : text).trim();
+  const start = body.search(/[[{]/);
+  if (start < 0) throw new Error("No JSON found in the pasted text.");
+  const open = body[start], close = open === "{" ? "}" : "]";
+  const end = body.lastIndexOf(close);
+  if (end < start) throw new Error("The JSON looks cut off. Copy the whole block.");
+  try {
+    return JSON.parse(body.slice(start, end + 1));
+  } catch {
+    throw new Error("That isn't valid JSON. Copy the whole block and try again.");
+  }
+}
+
+/** Validates pasted text into { id, entries, goals }. Throws an Error with a readable message. */
+function parsePatch(text, today = getLocalDateString()) {
+  const raw = extractJson(text);
+  const patch = Array.isArray(raw) ? { entries: raw } : raw;
+  if (!patch || typeof patch !== "object") throw new Error("Expected an object with an \"entries\" list.");
+  const list = patch.entries ?? [];
+  if (!Array.isArray(list)) throw new Error("\"entries\" must be a list.");
+  if (list.length > MAX_PATCH_ENTRIES) throw new Error("Too many entries in one paste (max " + MAX_PATCH_ENTRIES + ").");
+  const entries = list.map((e, i) => {
+    const label = "Entry " + (i + 1);
+    if (!e || typeof e !== "object") throw new Error(label + " isn't an object.");
+    const calories = Number(e.calories), protein = Number(e.protein ?? 0);
+    if (e.calories === undefined || !Number.isFinite(calories) || calories < 0 || calories > 10000) throw new Error(label + ": calories must be 0–10,000.");
+    if (!Number.isFinite(protein) || protein < 0 || protein > 1000) throw new Error(label + ": protein must be 0–1,000 g.");
+    const date = e.date == null || e.date === "" ? today : String(e.date);
+    if (!DATE_RE.test(date) || Number.isNaN(new Date(date + "T12:00:00").getTime())) throw new Error(label + ": date must look like 2026-10-25.");
+    if (date > today) throw new Error(label + ": date is in the future.");
+    const name = String(e.name ?? "").trim().slice(0, 160) || "Food";
+    return { name, calories: Math.round(calories), protein: Math.round(protein * 10) / 10, date };
+  });
+  let goals = null;
+  if (patch.goals != null) {
+    const g = patch.goals, next = {};
+    if (g.calories != null) {
+      const c = Number(g.calories);
+      if (!Number.isFinite(c) || c < 0 || c > 10000) throw new Error("Calorie goal must be 0–10,000.");
+      next.calories = Math.round(c);
+    }
+    if (g.protein != null) {
+      const p = Number(g.protein);
+      if (!Number.isFinite(p) || p < 10 || p > 1000) throw new Error("Protein goal must be 10–1,000 g.");
+      next.protein = Math.round(p);
+    }
+    if (Object.keys(next).length) goals = next;
+  }
+  if (!entries.length && !goals) throw new Error("Nothing to log: the patch has no entries or goals.");
+  const id = patch.id == null || patch.id === "" ? null : String(patch.id).slice(0, 100);
+  return { id, entries, goals };
 }
 
 // ============================================================
@@ -288,6 +366,19 @@ function reducer(state, action) {
         return { ...d, entries, totalCalories: entries.reduce((s, e) => s + e.calories, 0), totalProtein: entries.reduce((s, e) => s + e.protein, 0) };
       });
       return { ...state, history: newHistory };
+    }
+
+    case "APPLY_PATCH": {
+      const { id, entries, goals } = action.payload;
+      if (id && (state.appliedPatches || []).includes(id)) return state;
+      const today = state.today.date;
+      // Goals first, so a new past day created by this patch records the updated goals.
+      let next = goals ? { ...state, goals: { ...state.goals, ...goals } } : state;
+      for (const entry of entries) {
+        next = reducer(next, { type: entry.date === today ? "ADD_ENTRY" : "ADD_ENTRY_TO_DATE", payload: entry });
+      }
+      if (id) next = { ...next, appliedPatches: [...(next.appliedPatches || []), id].slice(-MAX_APPLIED_PATCHES) };
+      return next;
     }
 
     case "UPDATE_GOALS":
@@ -407,7 +498,9 @@ const UI_CSS = `
 .mt .badge.met { color:var(--green); background:var(--green-soft); } .mt .badge.above { color:var(--amber); background:var(--amber-soft); }
 .mt .history-heading .badge { margin:6px 6px 0 0; } .mt .bar { flex:1; height:100%; display:flex; flex-direction:column; align-items:center; justify-content:end; gap:7px; } .mt .bar span { width:100%; max-width:34px; min-height:3px; border-radius:5px; background:var(--green); } .mt .bar small { font-size:.62rem; }
 .mt .chart { width:100%; height:220px; margin-top:20px; } .mt .chart svg { overflow:visible; width:100%; height:100%; }
-.mt label { display:grid; gap:7px; font-size:.86rem; font-weight:600; } .mt input,.mt select { min-width:0; width:100%; min-height:50px; padding:12px 14px; background:var(--subtle); color:var(--ink); border:1px solid var(--line); border-radius:13px; outline-offset:2px; }
+.mt textarea { font:500 .85rem/1.45 ui-monospace,SFMono-Regular,Menlo,monospace; resize:vertical; }
+.mt .header-actions { display:flex; gap:10px; align-items:center; }
+.mt label { display:grid; gap:7px; font-size:.86rem; font-weight:600; } .mt input,.mt select,.mt textarea { min-width:0; width:100%; min-height:50px; padding:12px 14px; background:var(--subtle); color:var(--ink); border:1px solid var(--line); border-radius:13px; outline-offset:2px; }
 .mt input::placeholder { color:var(--muted); font-weight:400; } .mt input[aria-invalid="true"] { border-color:var(--danger); }
 .mt .fields { display:grid; grid-template-columns:1fr 1fr; gap:14px; } .mt .form { display:grid; gap:19px; }
 .mt .error { color:var(--danger); font-size:.86rem; } .mt .success { display:flex; align-items:center; gap:8px; padding:12px 14px; background:var(--green-soft); color:var(--green); border-radius:12px; font-size:.86rem; }
@@ -420,7 +513,7 @@ const UI_CSS = `
 .mt .sheet-head { display:flex; align-items:center; justify-content:space-between; gap:14px; margin-bottom:24px; }
 .mt .recent { display:flex; gap:8px; overflow-x:auto; padding:4px 3px 10px; } .mt .recent button { flex-shrink:0; text-align:left; border:1px solid var(--line); border-radius:14px; background:var(--subtle); padding:12px 14px; color:var(--ink); max-width:230px; } .mt .recent small { display:block; }
 .mt .toast { position:fixed; z-index:60; bottom:108px; left:50%; transform:translateX(-50%); width:max-content; max-width:calc(100% - 32px); border-radius:15px; background:var(--ink); color:var(--surface); padding:13px 20px; box-shadow:0 8px 30px #0002; font-size:.9rem; pointer-events:none; }
-@media(max-width:700px) { .mt .shell { padding:24px 18px 126px; } .mt .brand { margin-bottom:27px; } .mt .columns { grid-template-columns:1fr; gap:20px; } .mt .header { margin-bottom:24px; } .mt .pad,.mt .hero { padding:20px; } .mt .ring-area { width:210px; height:210px; margin:18px auto; } .mt .header>.button { padding:12px; } }
+@media(max-width:700px) { .mt .shell { padding:24px 18px 126px; } .mt .brand { margin-bottom:27px; } .mt .columns { grid-template-columns:1fr; gap:20px; } .mt .header { margin-bottom:24px; } .mt .pad,.mt .hero { padding:20px; } .mt .ring-area { width:210px; height:210px; margin:18px auto; } .mt .header-actions .button { padding:12px; } }
 @media(max-width:380px) { .mt .food-row { padding:14px; gap:8px; } .mt .fields { grid-template-columns:1fr; } .mt .brand small { display:none; } }
 @media(prefers-reduced-motion:reduce) { .mt *, .mt *::before,.mt *::after { transition:none!important; scroll-behavior:auto!important; } .mt button:active { transform:none; } }
 @media(prefers-reduced-transparency:reduce) { .mt .nav { background:var(--surface); backdrop-filter:none; } .mt .scrim { backdrop-filter:none; } }
@@ -570,6 +663,49 @@ function AddFood({ state, dispatch, date, onClose, notify }) {
   </form></Sheet>;
 }
 
+function PasteLog({ state, dispatch, onClose, notify }) {
+  const [text, setText] = useState("");
+  const [error, setError] = useState("");
+  const area = useRef(null);
+  const today = getLocalDateString();
+  let preview = null, previewError = "";
+  if (text.trim()) {
+    try { preview = parsePatch(text, today); } catch (e) { previewError = e.message; }
+  }
+  const duplicate = preview?.id && state.appliedPatches.includes(preview.id);
+  const pasteClipboard = async () => {
+    try {
+      const clip = await navigator.clipboard.readText();
+      if (!clip.trim()) { setError("Your clipboard is empty."); return; }
+      setText(clip); setError("");
+    } catch {
+      setError("Clipboard access was blocked. Long-press the box and choose Paste.");
+      area.current?.focus();
+    }
+  };
+  const apply = () => {
+    if (!preview || duplicate) return;
+    dispatch({ type: "APPLY_PATCH", payload: preview });
+    const n = preview.entries.length;
+    notify(n ? "Logged " + n + " " + (n === 1 ? "item" : "items") + (preview.goals ? " and updated goals." : ".") : "Daily goals updated.");
+    onClose();
+  };
+  const totals = preview ? totalEntries(preview.entries) : null;
+  return <Sheet title="Paste from Claude" onClose={onClose}><div className="form">
+    <p className="note">Paste the JSON block Claude gave you. You'll see what will be logged before anything is saved.</p>
+    <button type="button" className="button soft full" onClick={pasteClipboard}><ClipboardPaste size={18} />Paste from clipboard</button>
+    <label>JSON<textarea ref={area} rows={6} spellCheck={false} autoCapitalize="off" autoCorrect="off" value={text} onChange={(e) => { setText(e.target.value); setError(""); }} placeholder={'{ "macroTracker": "patch", "entries": [ … ] }'} aria-invalid={previewError ? "true" : undefined} /></label>
+    {(error || previewError) && <p className="error" role="alert">{error || previewError}</p>}
+    {duplicate && <p className="error" role="alert">This patch was already logged, so it won't be added again.</p>}
+    {preview && !duplicate && <div className="card">
+      {preview.entries.map((e, i) => <div className="food-row" key={i}><div className="grow"><div className="food-name">{e.name}</div><small>{e.date === today ? "Today" : formatDate(e.date)}</small></div><div className="numeric"><strong>{number(e.calories)} <small style={{ display: "inline" }}>kcal</small></strong><small>{number(e.protein)} g protein</small></div></div>)}
+      {preview.entries.length > 1 && <div className="food-row"><div className="grow"><strong>Total</strong></div><div className="numeric"><strong>{number(totals.calories)} <small style={{ display: "inline" }}>kcal</small></strong><small>{number(totals.protein)} g protein</small></div></div>}
+      {preview.goals && <div className="food-row"><div className="grow"><strong>New goals</strong></div><small>{[preview.goals.calories != null && number(preview.goals.calories) + " kcal", preview.goals.protein != null && number(preview.goals.protein) + " g protein"].filter(Boolean).join(" · ")}</small></div>}
+    </div>}
+    <button className="button primary full" disabled={!preview || duplicate} onClick={apply}><Check size={19} />{preview?.entries.length ? "Log " + preview.entries.length + " " + (preview.entries.length === 1 ? "item" : "items") : "Apply"}</button>
+  </div></Sheet>;
+}
+
 // Same definition as the "met both goals" count: within calories and at or above protein.
 function GoalBadge({ day }) {
   if (!day.entries.length) return null;
@@ -705,7 +841,7 @@ export default function MacroTracker() {
     <div inert={sheet ? "" : undefined}>
       <div className="shell"><div className="brand"><Flame size={20} />macro<span style={{ fontWeight: 400, color: "var(--muted)", marginLeft: -5 }}>tracker</span></div>
         <header className="header"><div>{tab === "today" && <p className="eyebrow">{formatDate(state.today.date)}</p>}<h1>{title}</h1></div>
-          {tab === "today" && <button className="button primary" onClick={() => add()}><Plus size={20} /><span>Add food</span></button>}
+          {tab === "today" && <div className="header-actions"><button className="icon" aria-label="Paste from Claude" title="Paste from Claude" onClick={() => setSheet({ kind: "paste" })}><ClipboardPaste size={20} /></button><button className="button primary" onClick={() => add()}><Plus size={20} /><span>Add food</span></button></div>}
         </header>
         {storageError && <p className="error card pad" role="alert" style={{ marginBottom: 20 }}>Changes could not be saved in this browser. Keep this page open and free up browser storage before leaving.</p>}
         <main id="main-content">
@@ -718,6 +854,7 @@ export default function MacroTracker() {
       <nav className="nav" aria-label="Main navigation">{tabs.map(([key, Icon, label]) => <button key={key} aria-current={tab === key ? "page" : undefined} onClick={() => { setTab(key); window.scrollTo({ top: 0, behavior: "instant" }); }}><Icon size={22} strokeWidth={tab === key ? 2.2 : 1.7} />{label}</button>)}</nav>
     </div>
     {sheet?.kind === "food" && <AddFood state={state} dispatch={dispatch} date={sheet.date} onClose={() => setSheet(null)} notify={notify} />}
+    {sheet?.kind === "paste" && <PasteLog state={state} dispatch={dispatch} onClose={() => setSheet(null)} notify={notify} />}
     {(sheet?.kind === "delete" || sheet?.kind === "reset") && <Sheet title={sheet.kind === "reset" ? "Reset all data?" : sheet.title} onClose={() => setSheet(null)}><div className="form"><p className="muted">{sheet.kind === "reset" ? "This permanently erases all food logs, weight measurements, frequent foods, goals, and preferences on this device. This cannot be undone." : sheet.description}</p><button className="button danger" onClick={() => { dispatch(sheet.kind === "reset" ? { type: "RESET_ALL" } : sheet.action); notify(sheet.kind === "reset" ? "All data reset." : "Entry deleted."); setSheet(null); }}>{sheet.kind === "reset" ? "Erase all data" : "Delete entry"}</button><button className="button full" onClick={() => setSheet(null)}>Keep {sheet.kind === "reset" ? "my data" : "entry"}</button></div></Sheet>}
     {sheet?.kind === "import" && <Sheet title="Restore backup?" onClose={() => setSheet(null)}><div className="form"><p className="muted">This replaces everything on this device with the backup: {sheet.data.history.length} archived {sheet.data.history.length === 1 ? "day" : "days"} and {sheet.data.weightLog.length} weight {sheet.data.weightLog.length === 1 ? "measurement" : "measurements"}. Download a backup of your current data first if you might want it.</p><button className="button primary" onClick={() => { dispatch({ type: "INIT", payload: prepareState(sheet.data) }); notify("Backup restored."); setSheet(null); }}>Replace with backup</button><button className="button full" onClick={() => setSheet(null)}>Cancel</button></div></Sheet>}
     <div role="status" aria-live="polite" aria-atomic="true">{toast && <div className="toast">{toast}</div>}</div>
